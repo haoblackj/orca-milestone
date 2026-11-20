@@ -1,4 +1,7 @@
 import assert from 'node:assert/strict'
+import { mkdir, mkdtemp } from 'node:fs/promises'
+import { tmpdir } from 'node:os'
+import { join } from 'node:path'
 import test from 'node:test'
 import { configureHost } from '../src/host.mjs'
 import { createLaunchHook } from '../src/launch-hook.mjs'
@@ -16,6 +19,22 @@ test('a plugin folder WSL serves to Windows gives the home, the environment and 
   assert.equal(await wsl.isRunning(42), true)
   assert.equal(await wsl.isRunning(43), false)
   assert.equal(wslHostOf('/Users/alice/orca-milestone'), null)
+})
+
+test('a WSL host polls a folder instead of watching it, and tells a change only when a list in it changed', async () => {
+  const dir = await mkdtemp(join(tmpdir(), 'orca-milestone-poll-'))
+  await mkdir(join(dir, 'list-a'))
+  const wsl = wslHostOf(String.raw`\\wsl.localhost\Ubuntu\home\alice\p`, { pollMs: 5 })
+  const names = []
+  const stop = wsl.watchDir(dir, (_event, name) => names.push(name))
+  const pause = () => new Promise((resolve) => setTimeout(resolve, 40))
+  await pause()
+  assert.deepEqual(names, [])
+  await mkdir(join(dir, 'list-b'))
+  await pause()
+  // The worker skips a change without a name.
+  assert.ok(names.length === 1 && typeof names[0] === 'string' && names[0].length > 0)
+  stop()
 })
 
 test('focusedPathOf finds the focused workspace by its id, else by its only match of name and branch', () => {

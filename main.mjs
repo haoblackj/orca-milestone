@@ -17,6 +17,7 @@ export default function activate(orca) {
     home: wsl?.home ?? homedir(),
     cli: resolveOrcaCli(),
     ...(wsl && {
+      watchDir: wsl.watchDir,
       runCli: (cli, args, timeout) => runOrca(cli, [...args, '--environment', wsl.environment], timeout),
       readFocusedPath: async () =>
         focusedPathOf(await orca.host.call('workspace.readContext'), (await orca.host.call('workspace.list')).workspaces)
