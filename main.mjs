@@ -11,7 +11,7 @@ import { focusedPathOf, wslHostOf } from './src/wsl-host.mjs'
 export default function activate(orca) {
   // Orca for Windows, with the agents in the WSL distro this folder lives in.
   const wsl = wslHostOf(import.meta.dirname)
-  if (wsl) configureHost({ isRunning: wsl.isRunning, permissionHook: false, codexProgress: false })
+  if (wsl) configureHost({ agentHome: wsl.agentHome, isRunning: wsl.isRunning, permissionHook: false, codexProgress: false })
   const worker = createMilestoneWorker({
     orca,
     home: wsl?.home ?? homedir(),

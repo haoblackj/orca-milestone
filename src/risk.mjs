@@ -2,8 +2,11 @@
 // so that the card can be decided on without opening the terminal. A heuristic read of the command:
 // a call is "read only" when every part of it is known to only read, "outside" when a part reaches
 // past this machine, and "write" otherwise, so an unknown command is never called harmless.
-import { homedir } from 'node:os'
-import { isAbsolute, join, normalize, relative } from 'node:path'
+import { posix } from 'node:path'
+import { host } from './host.mjs'
+
+// An agent's paths are POSIX paths, also when Orca for Windows runs the worker for agents in WSL.
+const { isAbsolute, join, normalize, relative } = posix
 
 export const RISK_LABELS = { read: '読むだけ', write: '書き換える', outside: '外に出る' }
 const DANGER_LABEL = '危険'
@@ -112,7 +115,7 @@ function shown(dir, workspace, home) {
  * a path elsewhere. A command that starts with `cd <dir> &&` runs there.
  * @param cwd  the folder Claude Code's shell was in, from the transcript, when known
  */
-export function whereOf(call, workspace, { cwd = call.cwd, home = homedir() } = {}) {
+export function whereOf(call, workspace, { cwd = call.cwd, home = host().agentHome } = {}) {
   const command = call.input?.command
   if (typeof command !== 'string' || !workspace) return ''
   let dir = typeof cwd === 'string' && cwd ? cwd : workspace

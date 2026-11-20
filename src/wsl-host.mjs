@@ -15,6 +15,7 @@ export function wslHostOf(folder, { statOf = stat, pollMs = 3_000 } = {}) {
   const root = `\\\\wsl.localhost\\${distro}`
   return {
     home: win32.join(root, 'home', user),
+    agentHome: `/home/${user}`,
     // Orca names the environment of a WSL distro after it, as `orca environment list` shows.
     environment: `${distro} (WSL)`,
     isRunning: async (pid) => Boolean(await statOf(win32.join(root, 'proc', String(pid))).catch(() => null)),

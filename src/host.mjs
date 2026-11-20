@@ -1,7 +1,10 @@
 // What differs when Orca for Windows runs the worker for agents in WSL (wsl-host.mjs): a process is
 // looked up in WSL's /proc, and the launch hook adds nothing that runs on a Windows path.
+import { homedir } from 'node:os'
 
 const LOCAL = {
+  /** The home of the agents, as their paths spell it. */
+  agentHome: homedir(),
   isRunning: async (pid) => {
     try {
       process.kill(pid, 0)

@@ -6,6 +6,7 @@ import test from 'node:test'
 import { configureHost } from '../src/host.mjs'
 import { createLaunchHook } from '../src/launch-hook.mjs'
 import { readWorkspaces } from '../src/orca-cli.mjs'
+import { whereOf } from '../src/risk.mjs'
 import { focusedPathOf, wslHostOf } from '../src/wsl-host.mjs'
 
 test('a plugin folder WSL serves to Windows gives the home, the environment and /proc of its distro', async () => {
@@ -16,6 +17,7 @@ test('a plugin folder WSL serves to Windows gives the home, the environment and 
   const wsl = wslHostOf(String.raw`\\wsl.localhost\Ubuntu\home\alice\repo\orca-milestone`, { statOf })
   assert.equal(wsl.home, String.raw`\\wsl.localhost\Ubuntu\home\alice`)
   assert.equal(wsl.environment, 'Ubuntu (WSL)')
+  assert.equal(wsl.agentHome, '/home/alice')
   assert.equal(await wsl.isRunning(42), true)
   assert.equal(await wsl.isRunning(43), false)
   assert.equal(wslHostOf('/Users/alice/orca-milestone'), null)
@@ -54,6 +56,16 @@ test('readWorkspaces takes the focused workspace from the reader when Orca marks
   const read = await readWorkspaces('orca', run, { readFocusedPath: async () => '/repo-a' })
   assert.equal(read.active.path, '/repo-a')
   assert.equal(read.agents[0].focused, true)
+})
+
+test('on a WSL host a permission card says where a command runs with the home of the distro', () => {
+  configureHost({ agentHome: '/home/alice' })
+  try {
+    assert.equal(whereOf({ input: { command: 'cd /home/alice/notes && ls' } }, '/home/alice/ws'), '~/notes')
+    assert.equal(whereOf({ input: { command: 'cd apps/web && ls' } }, '/home/alice/ws'), 'apps/web')
+  } finally {
+    configureHost({})
+  }
 })
 
 test('on a WSL host the launch hook adds no Windows paths: no permission hook, no Codex tool', () => {
