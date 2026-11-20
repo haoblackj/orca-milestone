@@ -25,14 +25,20 @@ export function wslHostOf(folder, { statOf = stat, pollMs = 3_000 } = {}) {
     watchDir: (dir, onChange) => {
       let last = null
       let timer = null
+      let stopped = false
       const poll = async () => {
         const now = await stampOf(dir).catch(() => null)
+        // Stopped while reading: no next poll.
+        if (stopped) return
         if (last !== null && now !== last) onChange('change', dir)
         last = now
         timer = setTimeout(poll, pollMs)
       }
       timer = setTimeout(poll, 0)
-      return () => clearTimeout(timer)
+      return () => {
+        stopped = true
+        clearTimeout(timer)
+      }
     }
   }
 }
@@ -41,23 +47,4 @@ async function stampOf(dir) {
   const names = (await readdir(dir)).sort()
   const times = await Promise.all(names.map(async (name) => (await stat(join(dir, name)).catch(() => null))?.mtimeMs))
   return names.map((name, index) => `${name}@${times[index]}`).join('\n')
-}
-
-const branchName = (branch) => String(branch ?? '').replace(/^refs\/heads\//, '')
-
-/**
- * The path of the focused workspace. `orca worktree ps --environment` marks none active, so the
- * focus comes from the host API: the workspace with the id `workspace.readContext` gives, else
- * the only one with its name and branch. Null when it cannot be told.
- * @param context what `workspace.readContext` answers
- * @param workspaces the rows of `workspace.list`
- */
-export function focusedPathOf(context, workspaces) {
-  if (!context) return null
-  const byId = context.workspaceId ? workspaces.find((workspace) => workspace.id === context.workspaceId) : null
-  if (byId) return byId.path
-  const named = workspaces.filter(
-    (workspace) => workspace.name === context.displayName && branchName(workspace.branch) === branchName(context.branch)
-  )
-  return named.length === 1 ? named[0].path : null
 }

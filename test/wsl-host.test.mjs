@@ -5,9 +5,9 @@ import { join } from 'node:path'
 import test from 'node:test'
 import { configureHost } from '../src/host.mjs'
 import { createLaunchHook } from '../src/launch-hook.mjs'
-import { readWorkspaces } from '../src/orca-cli.mjs'
+import { cliEnv, readWorkspaces } from '../src/orca-cli.mjs'
 import { whereOf } from '../src/risk.mjs'
-import { focusedPathOf, wslHostOf } from '../src/wsl-host.mjs'
+import { wslHostOf } from '../src/wsl-host.mjs'
 
 test('a plugin folder WSL serves to Windows gives the home, the environment and /proc of its distro', async () => {
   const statOf = async (path) => {
@@ -39,21 +39,19 @@ test('a WSL host polls a folder instead of watching it, and tells a change only 
   stop()
 })
 
-test('focusedPathOf finds the focused workspace by its id, else by its only match of name and branch', () => {
-  const workspaces = [
-    { id: 'a', name: 'main', branch: 'feature/x', path: '/repo-a' },
-    { id: 'b', name: 'main', branch: 'feature/y', path: '/repo-b' },
-    { id: 'c', name: 'main', branch: 'refs/heads/feature/y', path: '/repo-c' }
-  ]
-  assert.equal(focusedPathOf({ workspaceId: 'b', branch: 'feature/y', displayName: 'main' }, workspaces), '/repo-b')
-  assert.equal(focusedPathOf({ workspaceId: 'zz', branch: 'feature/x', displayName: 'main' }, workspaces), '/repo-a')
-  assert.equal(focusedPathOf({ branch: 'feature/y', displayName: 'main' }, workspaces), null)
+test('on Windows the Orca CLI gets APPDATA and LOCALAPPDATA, which Orca leaves out of a worker', () => {
+  const env = cliEnv({ PATH: 'p' }, 'win32', String.raw`C:\Users\alice`)
+  assert.equal(env.APPDATA, String.raw`C:\Users\alice\AppData\Roaming`)
+  assert.equal(env.LOCALAPPDATA, String.raw`C:\Users\alice\AppData\Local`)
+  assert.equal(env.PATH, 'p')
+  assert.equal(cliEnv({ APPDATA: 'x' }, 'win32', 'C:\\h').APPDATA, 'x')
+  assert.equal(cliEnv({}, 'darwin', '/Users/alice').APPDATA, undefined)
 })
 
-test('readWorkspaces takes the focused workspace from the reader when Orca marks none active', async () => {
-  const worktrees = [{ path: '/repo-a', displayName: 'a', isArchived: false, agents: [{ agentType: 'claude', state: 'done', paneKey: 't:l' }] }]
+test('readWorkspaces takes the focused workspace by the id the host API gives when Orca marks none active', async () => {
+  const worktrees = [{ worktreeId: 'r::/repo-a', path: '/repo-a', displayName: 'a', isArchived: false, agents: [{ agentType: 'claude', state: 'done', paneKey: 't:l' }] }]
   const run = async () => ({ ok: true, result: { worktrees } })
-  const read = await readWorkspaces('orca', run, { readFocusedPath: async () => '/repo-a' })
+  const read = await readWorkspaces('orca', run, { readFocusedId: async () => 'r::/repo-a' })
   assert.equal(read.active.path, '/repo-a')
   assert.equal(read.agents[0].focused, true)
 })

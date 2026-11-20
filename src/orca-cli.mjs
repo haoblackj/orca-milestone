@@ -3,7 +3,8 @@
 // can share, and it says nothing about other workspaces, so both come from here.
 import { execFile } from 'node:child_process'
 import { existsSync } from 'node:fs'
-import { dirname, join } from 'node:path'
+import { homedir } from 'node:os'
+import { dirname, join, win32 } from 'node:path'
 import { offersOf } from './next-actions.mjs'
 
 /** The CLI bundled with the Orca app that runs this worker, else `orca` on PATH. */
@@ -14,11 +15,22 @@ export function resolveOrcaCli(execPath = process.execPath) {
   return bundled.find((path) => existsSync(path)) ?? 'orca'
 }
 
+/**
+ * The environment of the Orca CLI. Orca for Windows starts a worker without APPDATA, and the CLI
+ * cannot find the running Orca without it (runtime_unavailable), so it gets the usual folders.
+ */
+export function cliEnv(env = process.env, platform = process.platform, home = homedir()) {
+  if (platform !== 'win32') return env
+  return { APPDATA: win32.join(home, 'AppData', 'Roaming'), LOCALAPPDATA: win32.join(home, 'AppData', 'Local'), ...env }
+}
+
 export function runOrca(cli, args, timeout = 10_000) {
   return new Promise((resolve, reject) => {
-    execFile(cli, args, { timeout, maxBuffer: 16 * 1024 * 1024 }, (error, stdout) => {
+    execFile(cli, args, { timeout, maxBuffer: 16 * 1024 * 1024, env: cliEnv() }, (error, stdout, stderr) => {
       if (error) {
-        reject(error)
+        // What the CLI said tells why it failed; the message alone names only the command.
+        const said = `${stdout}\n${stderr}`.trim().slice(0, 500)
+        reject(new Error(`${error.message.split('\n')[0]} (code ${error.code}, signal ${error.signal})${said ? `: ${said}` : ''}`))
         return
       }
       try {
@@ -112,12 +124,12 @@ export async function readWorkspaces(cli, run = runOrca, readers = {}) {
   if (!response?.ok) {
     throw new Error(response?.error?.message ?? 'orca worktree ps failed')
   }
-  const { readTurnEnded = async () => null, readTerminals = async () => (await run(cli, ['terminal', 'list', '--json']))?.result?.terminals ?? [], readFocusedPath, ...offerReaders } = readers
+  const { readTurnEnded = async () => null, readTerminals = async () => (await run(cli, ['terminal', 'list', '--json']))?.result?.terminals ?? [], readFocusedId, ...offerReaders } = readers
   let listed = response.result.worktrees.filter((worktree) => !worktree.isArchived)
   // Asked about one environment, as for WSL, Orca marks no workspace active.
-  if (readFocusedPath && !listed.some((worktree) => worktree.isActive)) {
-    const focused = await readFocusedPath().catch(() => null)
-    listed = listed.map((worktree) => (worktree.path === focused ? { ...worktree, isActive: true } : worktree))
+  if (readFocusedId && !listed.some((worktree) => worktree.isActive)) {
+    const focused = await readFocusedId().catch(() => null)
+    listed = listed.map((worktree) => (focused && worktree.worktreeId === focused ? { ...worktree, isActive: true } : worktree))
   }
   if (mayHoldTeam(listed)) listed = joinTeams(listed, await readTerminals().catch(() => []))
   const worktrees = await settleAgents(listed, readTurnEnded)

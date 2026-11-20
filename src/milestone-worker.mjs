@@ -43,8 +43,8 @@ export function createMilestoneWorker({
   readOrca = readWorkspaces,
   runCli = runOrca,
   now = Date.now,
-  // Where the focused workspace is when Orca marks none active, see readWorkspaces.
-  readFocusedPath,
+  // Which workspace is focused when Orca marks none active, see readWorkspaces.
+  readFocusedId,
   watchDir = (dir, onChange) => watch(dir, { recursive: true }, onChange)
 }) {
   const paths = claudePaths(home)
@@ -77,7 +77,7 @@ export function createMilestoneWorker({
     readLaunch: createLaunchReader(home, { readLaunchInfo }),
     readLaunchInfo,
     readAllowed: (sessionId) => grants.allowed(sessionId),
-    readFocusedPath
+    readFocusedId
   }
   let lastHtml = null
   let started = null
