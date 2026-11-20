@@ -8,6 +8,7 @@ import { createReadStream } from 'node:fs'
 import { open, readdir, readFile, stat } from 'node:fs/promises'
 import { createInterface } from 'node:readline'
 import { join } from 'node:path'
+import { host } from './host.mjs'
 
 const SESSION_ID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/
 const TEAM_LIST_ID = /^session-([0-9a-f]{8})$/
@@ -34,15 +35,7 @@ export function isTaskListId(name) {
   return SESSION_ID.test(name) || TEAM_LIST_ID.test(name)
 }
 
-function isRunning(pid) {
-  try {
-    process.kill(pid, 0)
-    return true
-  } catch (error) {
-    // EPERM: the process exists but belongs to someone else.
-    return error.code === 'EPERM'
-  }
-}
+const isRunning = (pid) => host().isRunning(pid)
 
 /**
  * Ids of the Claude sessions running now. Each running session keeps
@@ -59,7 +52,7 @@ export async function readRunningSessionIds(sessionsRoot) {
   for (const name of names) {
     if (!/^\d+\.json$/.test(name)) continue
     const entry = await readJson(join(sessionsRoot, name))
-    if (entry && isSessionId(entry.sessionId) && Number.isInteger(entry.pid) && isRunning(entry.pid)) {
+    if (entry && isSessionId(entry.sessionId) && Number.isInteger(entry.pid) && (await isRunning(entry.pid))) {
       ids.add(entry.sessionId)
     }
   }
@@ -377,7 +370,7 @@ export async function readRunningSessions(sessionsRoot) {
   for (const name of names) {
     if (!/^\d+\.json$/.test(name)) continue
     const entry = await readJson(join(sessionsRoot, name))
-    if (entry && isSessionId(entry.sessionId) && Number.isInteger(entry.pid) && isRunning(entry.pid) && typeof entry.cwd === 'string') {
+    if (entry && isSessionId(entry.sessionId) && Number.isInteger(entry.pid) && (await isRunning(entry.pid)) && typeof entry.cwd === 'string') {
       sessions.push({ sessionId: entry.sessionId, cwd: entry.cwd, pid: entry.pid })
     }
   }

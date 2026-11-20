@@ -4,13 +4,23 @@ import { homedir } from 'node:os'
 import { join } from 'node:path'
 import { createLaunchHook } from './src/launch-hook.mjs'
 import { createMilestoneWorker } from './src/milestone-worker.mjs'
-import { resolveOrcaCli } from './src/orca-cli.mjs'
+import { configureHost } from './src/host.mjs'
+import { resolveOrcaCli, runOrca } from './src/orca-cli.mjs'
+import { focusedPathOf, wslHostOf } from './src/wsl-host.mjs'
 
 export default function activate(orca) {
+  // Orca for Windows, with the agents in the WSL distro this folder lives in.
+  const wsl = wslHostOf(import.meta.dirname)
+  if (wsl) configureHost({ isRunning: wsl.isRunning, permissionHook: false, codexProgress: false })
   const worker = createMilestoneWorker({
     orca,
-    home: homedir(),
-    cli: resolveOrcaCli()
+    home: wsl?.home ?? homedir(),
+    cli: resolveOrcaCli(),
+    ...(wsl && {
+      runCli: (cli, args, timeout) => runOrca(cli, [...args, '--environment', wsl.environment], timeout),
+      readFocusedPath: async () =>
+        focusedPathOf(await orca.host.call('workspace.readContext'), (await orca.host.call('workspace.list')).workspaces)
+    })
   })
   orca.hooks.on(
     'agent.launch.before',

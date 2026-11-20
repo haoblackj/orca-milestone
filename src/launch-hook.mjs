@@ -1,4 +1,5 @@
 import { fileURLToPath } from 'node:url'
+import { host } from './host.mjs'
 
 // What the plugin adds when Orca starts an agent, so the panel has tasks to show without the user
 // editing any settings. Claude Code leaves its task tools off on newer models and writes no goal
@@ -69,7 +70,7 @@ export function withTaskInstructions(command) {
   // Orca or the user may have appended their own, and the last flag would win over the other.
   if (!match || /\s--append-system-prompt(-file)?(\s|=)/.test(command)) return command
   // Settings of the user's own on the command line stay theirs alone.
-  const settings = /\s--settings(\s|=)/.test(command) ? null : claudeSettings()
+  const settings = /\s--settings(\s|=)/.test(command) || !host().permissionHook ? null : claudeSettings()
   return `${match[1]} --append-system-prompt '${CLAUDE_INSTRUCTIONS}'${settings ? ` --settings '${settings}'` : ''}${command.slice(match[1].length)}`
 }
 
@@ -99,7 +100,7 @@ export function createLaunchHook(paths) {
         env: { ...event.env, CLAUDE_CODE_ENABLE_TODO_TOOLS: '1' }
       })
     }
-    if (event.agent === 'codex') {
+    if (event.agent === 'codex' && host().codexProgress) {
       return next({ ...event, command: withProgressTool(event.command, paths) })
     }
     return undefined

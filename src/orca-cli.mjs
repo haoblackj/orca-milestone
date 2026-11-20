@@ -9,8 +9,9 @@ import { offersOf } from './next-actions.mjs'
 /** The CLI bundled with the Orca app that runs this worker, else `orca` on PATH. */
 export function resolveOrcaCli(execPath = process.execPath) {
   // The worker runs Orca's own binary as Node: Orca.app/Contents/MacOS/Orca.
-  const bundled = join(dirname(execPath), '..', 'Resources', 'bin', 'orca')
-  return existsSync(bundled) ? bundled : 'orca'
+  // On Windows: orca\Orca.exe, and the native launcher beside orca.cmd, which needs no shell.
+  const bundled = [join(dirname(execPath), '..', 'Resources', 'bin', 'orca'), join(dirname(execPath), 'resources', 'bin', 'orca.exe')]
+  return bundled.find((path) => existsSync(path)) ?? 'orca'
 }
 
 export function runOrca(cli, args, timeout = 10_000) {
@@ -111,8 +112,13 @@ export async function readWorkspaces(cli, run = runOrca, readers = {}) {
   if (!response?.ok) {
     throw new Error(response?.error?.message ?? 'orca worktree ps failed')
   }
-  const { readTurnEnded = async () => null, readTerminals = async () => (await run(cli, ['terminal', 'list', '--json']))?.result?.terminals ?? [], ...offerReaders } = readers
+  const { readTurnEnded = async () => null, readTerminals = async () => (await run(cli, ['terminal', 'list', '--json']))?.result?.terminals ?? [], readFocusedPath, ...offerReaders } = readers
   let listed = response.result.worktrees.filter((worktree) => !worktree.isArchived)
+  // Asked about one environment, as for WSL, Orca marks no workspace active.
+  if (readFocusedPath && !listed.some((worktree) => worktree.isActive)) {
+    const focused = await readFocusedPath().catch(() => null)
+    listed = listed.map((worktree) => (worktree.path === focused ? { ...worktree, isActive: true } : worktree))
+  }
   if (mayHoldTeam(listed)) listed = joinTeams(listed, await readTerminals().catch(() => []))
   const worktrees = await settleAgents(listed, readTurnEnded)
   const active = worktrees.find((worktree) => worktree.isActive)
