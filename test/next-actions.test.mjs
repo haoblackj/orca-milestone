@@ -20,12 +20,37 @@ const worktree = (agents, extra = {}) => ({ path: '/work/app', agents, ...extra 
 test('parseSuggestions keeps up to three valid buttons from a block at the very end', () => {
   assert.deepEqual(parseSuggestions(block([proposal({ reason: ' 確認が済んだため ' })])), [{ ...proposal(), reason: '確認が済んだため' }])
   assert.equal(parseSuggestions(block([1, 2, 3, 4].map((n) => proposal({ label: `L${n}` })))).length, 3)
-  for (const bad of [proposal({ prompt: '-rf' }), proposal({ label: 'あ'.repeat(31) }), proposal({ prompt: 'a\nb' }), { label: 'x' }]) {
+  for (const bad of [proposal({ prompt: '-rf' }), proposal({ prompt: 'あ'.repeat(301) }), proposal({ label: 'a\nb' }), proposal({ prompt: 'a\nb' }), { label: 'x' }]) {
     assert.deepEqual(parseSuggestions(block([bad])), [], JSON.stringify(bad))
   }
   assert.deepEqual(parseSuggestions(`${block([proposal()])}and more`), [])
   assert.deepEqual(parseSuggestions('```next\nnot json\n```'), [])
   assert.deepEqual(parseSuggestions(null), [])
+})
+
+// The panel's cards wrap a label onto more lines rather than cut it, so a label over the limit is a
+// matter of looks. It costs the end of the label, not the card (as a bad reason costs only the reason).
+test('a label over the limit is shortened to the limit with an ellipsis, and its card is kept', () => {
+  const long = parseSuggestions(block([proposal({ label: 'あ'.repeat(31), reason: '理由' })]))
+  assert.equal(long.length, 1)
+  assert.equal(long[0].label, `${'あ'.repeat(29)}…`)
+  assert.equal([...long[0].label].length, 30)
+  assert.equal(long[0].prompt, 'PR を作ってください')
+  assert.equal(long[0].reason, '理由')
+
+  // Exactly at the limit, and below it, nothing changes: not even the spaces inside the label.
+  assert.equal(parseSuggestions(block([proposal({ label: 'あ'.repeat(30) })]))[0].label, 'あ'.repeat(30))
+  assert.equal(parseSuggestions(block([proposal({ label: 'PR  を  作る' })]))[0].label, 'PR  を  作る')
+  // Far over the limit, with the spaces around trimmed first.
+  assert.equal(parseSuggestions(block([proposal({ label: `  ${'readTurnEnded を status で置き換えられるか調べる'}  ` })]))[0].label, 'readTurnEnded を status で置き換えら…')
+  assert.equal(parseSuggestions(block([proposal({ label: 'あ'.repeat(200) })]))[0].label, `${'あ'.repeat(29)}…`)
+})
+
+test('a workspace whose agent wrote a label over the limit still gets its card', () => {
+  const offer = nextOffer(worktree([agent({ lastAssistantMessage: block([proposal({ label: 'mainAgent が working なら transcript を読まない' })]) })]))
+  assert.equal(offer.suggestions.length, 1)
+  assert.equal([...offer.suggestions[0].label].length, 30)
+  assert.ok(offer.suggestions[0].label.endsWith('…'))
 })
 
 test('a bad reason costs only the reason', () => {

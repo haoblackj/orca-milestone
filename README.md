@@ -159,7 +159,7 @@ flowchart LR
 - ワーカーは内容が変わったときだけ本文を送ります。パネルを開いたとき（サイドバーのタブを切り替えて戻ったときを含む）は、その時点の本文を取りに行きます。
 - Agent Teams を率いる Claude は、タスク一覧をチーム名（`session-<セッション ID の先頭 8 桁>`）のフォルダーに書きます。どのセッションのものかは、`~/.claude/teams/<チーム名>/config.json` のリーダーのセッション ID か、なければ先頭 8 桁が一致する transcript で決めます。
 - 質問と許可のカードのために、エージェントが入力や許可を待っているときだけ、Claude の transcript の末尾（1 MB まで）を読みます。Codex の許可は、そのペインの画面を `orca terminal read` で読みます。
-- 次の作業のカードは、`orca worktree ps` が返すエージェントの最後の回答から、`next` のコードブロックだけを取り出して作ります。それ以外の依頼文と回答は使いません。ブロックの規則は [agent-status-panel](https://github.com/andoshin11/agent-status-panel) と同じです。
+- 次の作業のカードは、`orca worktree ps` が返すエージェントの最後の回答から、`next` のコードブロックだけを取り出して作ります。それ以外の依頼文と回答は使いません。ブロックの規則は [agent-status-panel](https://github.com/andoshin11/agent-status-panel) に合わせています。ただし、ラベルが 30 文字を超えるカードは、捨てずに 29 文字と「…」に切り詰めて出します（agent-status-panel は捨てます）。ほかの規則を外れたカードは捨てます。
 - フォーカス中のワークスペースのパスは、`workspace.readContext` が返さないため、Orca に同梱の CLI（`orca worktree ps`）で調べます。セッションは、transcript に記録された作業ディレクトリがそのパスの中にあるものを表示します。
 - フォーカスの移動は `workspace.changed`、どのワークスペースの Agent の変化も `agent.status.changed` で知り、そのときだけ `orca worktree ps` で取り直します（1 回 0.1〜0.2 秒）。イベントで分からない変化（イベントなしに終わったセッションなど）のために、30 秒ごとにも取り直します。
 - Orca は 5 分間やりとりのないワーカーを止めるため、パネルは開いている間、1 分ごとに本文を取りに行きます。パネルを閉じているとワーカーは止まることがあり、次にパネルを開いたときかイベントが届いたときに起動します。

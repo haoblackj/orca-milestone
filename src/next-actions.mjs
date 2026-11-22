@@ -66,7 +66,16 @@ function isSuggestion(value) {
   const prompt = value.prompt.trim()
   if (!label || !prompt || CONTROL.test(label) || CONTROL.test(prompt)) return false
   // The prompt goes on a command line as the value of an option.
-  return [...label].length <= LABEL_MAX && [...prompt].length <= PROMPT_MAX && !prompt.startsWith('-')
+  return [...prompt].length <= PROMPT_MAX && !prompt.startsWith('-')
+}
+
+/**
+ * A label is only displayed, and the panel's cards wrap it onto more lines rather than cut it, so one
+ * over the limit costs its end, not its card. Under the limit it is left as it is.
+ */
+function labelOf(label) {
+  const chars = [...label.trim()]
+  return chars.length > LABEL_MAX ? `${chars.slice(0, LABEL_MAX - 1).join('')}…` : chars.join('')
 }
 
 /** Optional, and only shown: a bad one costs the reason, not the button. */
@@ -89,7 +98,7 @@ export function parseSuggestions(message) {
   return list
     .filter(isSuggestion)
     .slice(0, SUGGESTIONS_MAX)
-    .map(({ label, prompt, reason }) => ({ label: label.trim(), prompt: prompt.trim(), reason: reasonOf(reason) }))
+    .map(({ label, prompt, reason }) => ({ label: labelOf(label), prompt: prompt.trim(), reason: reasonOf(reason) }))
 }
 
 /**
