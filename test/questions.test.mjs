@@ -291,6 +291,45 @@ test('a turn stays over after compacting while idle, and Orca saying the agent i
   assert.deepEqual(still.agents.map((agent) => agent.state), ['working'], 'the agent itself still working stays working')
 })
 
+// The transcript of a working agent is opened over the share on every refresh, at 0.13-0.25 s and up to
+// 2.6 s under load, to learn what Orca's mainAgent already says: that the agent itself is working.
+test('the transcript is read only when Orca does not say whether the agent itself is working', async () => {
+  const { readWorkspaces } = await import('../src/orca-cli.mjs')
+  const reply = 'できました\n```next\n[{"label":"A","prompt":"do a"}]\n```'
+  const busy = { agentType: 'claude', state: 'working', paneKey: 'tab:leaf', hasLivePty: true, stateStartedAt: 7, lastAssistantMessage: reply }
+  const read = async (agent, turnEnded) => {
+    const reads = []
+    const run = async () => ({ ok: true, result: { worktrees: [{ path: '/a', displayName: 'a', agents: [agent] }] } })
+    const result = await readWorkspaces('orca', run, { readTurnEnded: async (path) => (reads.push(path), turnEnded) })
+    return { reads, states: result.agents.map((entry) => [entry.state, entry.background, entry.since]) }
+  }
+
+  // Orca says the agent itself works: no read, whatever the transcript would say.
+  const working = await read({ ...busy, mainAgent: { state: 'working', stateStartedAt: 3_000 } }, 4_000)
+  assert.deepEqual(working.reads, [])
+  assert.deepEqual(working.states, [['working', false, 7]])
+
+  // Orca says it is done, with the time: that is enough.
+  const done = await read({ ...busy, mainAgent: { state: 'done', stateStartedAt: 3_000 } }, 4_000)
+  assert.deepEqual(done.reads, [])
+  assert.deepEqual(done.states, [['done', true, 3_000]])
+
+  // An Orca without mainAgent: the transcript decides, as before.
+  const old = await read(busy, 4_000)
+  assert.deepEqual(old.reads, ['/a'])
+  assert.deepEqual(old.states, [['done', true, 4_000]])
+  assert.deepEqual((await read(busy, null)).states, [['working', false, 7]])
+
+  // Done, but without a time to use: the transcript decides, and gives the time.
+  const untimed = await read({ ...busy, mainAgent: { state: 'done' } }, 5_000)
+  assert.deepEqual(untimed.reads, ['/a'])
+  assert.deepEqual(untimed.states, [['done', true, 5_000]])
+
+  // A mainAgent of another state, or with no state: the transcript decides.
+  assert.deepEqual((await read({ ...busy, mainAgent: { state: 'waiting' } }, 6_000)).reads, ['/a'])
+  assert.deepEqual((await read({ ...busy, mainAgent: {} }, 6_000)).reads, ['/a'])
+})
+
 test('in an agent team, the lead stands for the workspace and its teammates go under it', async () => {
   const { readWorkspaces, joinTeams, mayHoldTeam } = await import('../src/orca-cli.mjs')
   const reply = 'できました\n```next\n[{"label":"A","prompt":"do a"}]\n```'

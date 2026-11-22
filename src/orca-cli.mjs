@@ -90,6 +90,15 @@ function mainAgentDone(agent) {
 }
 
 /**
+ * Whether Orca itself says the agent is working (`mainAgent`, as above): then its turn is not over, and
+ * the transcript has nothing to add. Reading it costs 0.13-0.25 s of every refresh over a WSL share, and
+ * up to 2.6 s under load. Without `mainAgent`, or with one that does not say it, the transcript decides.
+ */
+function itselfWorking(agent) {
+  return agent.mainAgent?.state === 'working'
+}
+
+/**
  * The workspaces with each Claude agent that Orca calls working but whose turn is over marked as
  * done, and `background`: shells it started go on running, and it waits for the user. Its proposals
  * then show as for any agent that finished. Its `stateStartedAt` becomes the end of the turn: Orca's
@@ -101,7 +110,7 @@ export async function settleAgents(worktrees, readTurnEnded) {
   const settled = []
   for (const worktree of worktrees) {
     const working = mainAgents(worktree).filter((agent) => agent.agentType === 'claude' && agent.state === 'working' && agent.hasLivePty === true)
-    const ended = working.length !== 1 ? null : (mainAgentDone(working[0]) ?? (await readTurnEnded(worktree.path).catch(() => null)))
+    const ended = working.length !== 1 ? null : (mainAgentDone(working[0]) ?? (itselfWorking(working[0]) ? null : await readTurnEnded(worktree.path).catch(() => null)))
     if (!ended) {
       settled.push(worktree)
       continue
