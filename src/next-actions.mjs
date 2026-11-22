@@ -22,6 +22,7 @@ const REASON_MAX = 80
 const QUESTION_MAX = 300
 const OPTION_MAX = 60
 const DETAIL_MAX = 200
+const FROM_MAX = 60
 // One key each: the menu takes the number of an option as a single key press.
 const OPTIONS_MAX = 9
 const QUESTIONS_MAX = 4
@@ -103,8 +104,10 @@ export function parseSuggestions(message) {
 }
 
 /**
- * The one live main agent of a workspace, or null. With two, a card could reach another agent
- * than the one shown. Orca keeps the record of a pane that has closed, without hasLivePty.
+ * The one live main agent of a workspace, or null. A question or a call waiting for permission is
+ * read from the session of the workspace, which with two agents may not be the one that waits.
+ * Proposals take any of several, see proposalAmong. Orca keeps the record of a pane that has closed,
+ * without hasLivePty.
  */
 function soleAgent(worktree) {
   const agents = liveAgents(worktree)
@@ -156,7 +159,8 @@ function proposalAmong(worktree, agents) {
     .sort((a, b) => (b.agent.stateStartedAt ?? 0) - (a.agent.stateStartedAt ?? 0))[0]
   if (!proposing) return null
   const { agent, suggestions } = proposing
-  const from = agent.conversationName ?? agent.displayName ?? agent.taskTitle ?? null
+  const name = agent.conversationName ?? agent.displayName ?? agent.taskTitle
+  const from = typeof name === 'string' && name.trim() ? shorten(name, FROM_MAX) : null
   return { ...base('proposal', worktree, agent, ''), suggestions, ...(from ? { from } : {}) }
 }
 

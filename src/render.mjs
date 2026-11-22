@@ -94,7 +94,7 @@ function renderNext(offer) {
       card(offer.id, index, s.label, s.action === 'restart' ? [['detail', s.detail]] : [['reason', s.reason], ['prompt', clip(s.prompt, PROMPT_LINES_MAX)]])
     )
     // In a workspace of several agents, which one proposes.
-    const from = offer.from ? `<p class="where">${escape(offer.from)} から</p>` : ''
+    const from = offer.from ? `<p class="from">${escape(offer.from)} から</p>` : ''
     body = `${from}<ol class="actions">${cards.join('')}</ol>`
   }
   // What the rest of this turn allowed without a card, to be read afterwards.

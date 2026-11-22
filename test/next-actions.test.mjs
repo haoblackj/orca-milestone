@@ -96,6 +96,8 @@ test('in a workspace of several agents, the cards come from the one that finishe
   assert.equal(nextOffer(worktree([agent({ paneKey: 'tab:notes', stateStartedAt: 9, lastAssistantMessage: 'no block' }), older])).paneKey, 'tab:older', 'one without cards gives way')
   assert.equal(nextOffer(worktree([busy, agent({ paneKey: 'tab:quiet', lastAssistantMessage: 'no block' })])), null)
   assert.equal(nextOffer(worktree([agent()])).from, undefined, 'one agent needs no name')
+  const long = nextOffer(worktree([busy, agent({ paneKey: 'tab:long', conversationName: 'あ'.repeat(100) })])).from
+  assert.equal([...long].length, 60, 'a long name is shortened')
 
   const shown = renderBody(buildModel({ path: '/work/app', displayName: 'app', agentStates: ['working', 'done'] }, [], [], [offer]))
   assert.match(shown, /リリースノートを書く/)
