@@ -53,14 +53,16 @@ status: done
 
 - 2026-11-22 に、切り詰めの修正（2abba42）とレビューの反映（16b8bdc）が fork の `wsl-host`（bd7af1a）に入っていることを確かめ、記録を済みにした。作業用のワークツリーとブランチは消した。
 
+- `main` への取り込みは、しないと決まった（`main` は上流の写しのままにし、修正は `wsl-host` に置く。判断は `docs/work/next-card-latency.md` の 2026-11-22 の案 B）。上流の v0.10.0 は `wsl-host` に merge した。
+
 ## 残っていること
-- 既定ブランチ（`main`）への取り込み。
+- なし。
 
 ## 次に Claude がすること
-- なし。下の問いにリーダーが答えたら、それに沿って進める。
+- なし。
 
 ## リーダーに決めてほしいこと
-- `wsl-host` を `main` へ取り込むか、いつ取り込むか（`docs/work/next-card-latency.md` の同じ問いと一つ。調べた事実と案はそちらに書いた）。Claude の案: 上流の v0.10.0 を `wsl-host` に merge してから、fork の中の PR で `main` に取り込む。答えで何が変わるか: 取り込まなければ、修正は `wsl-host` にだけ残る。
+- なし。
 
 ## 参照
 - `src/next-actions.mjs`（`LABEL_MAX`、`isSuggestion`、`parseSuggestions`）、`src/launch-hook.mjs`（エージェントへの指示文）、`panel/style.css`（`.action .label`）
