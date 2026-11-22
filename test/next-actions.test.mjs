@@ -46,6 +46,15 @@ test('a label over the limit is shortened to the limit with an ellipsis, and its
   assert.equal(parseSuggestions(block([proposal({ label: 'あ'.repeat(200) })]))[0].label, `${'あ'.repeat(29)}…`)
 })
 
+test('a label is cut between characters, never inside a surrogate pair, and one already ending in an ellipsis is cut like any other', () => {
+  // '😀' is two UTF-16 units: a cut by units at 29 would leave half of it.
+  const emoji = parseSuggestions(block([proposal({ label: `${'あ'.repeat(28)}😀😀😀` })]))[0].label
+  assert.equal(emoji, `${'あ'.repeat(28)}😀…`)
+  assert.equal([...emoji].length, 30)
+  assert.ok(!/[\ud800-\udbff](?![\udc00-\udfff])|(?<![\ud800-\udbff])[\udc00-\udfff]/.test(emoji), 'no lone surrogate')
+  assert.equal(parseSuggestions(block([proposal({ label: `${'x'.repeat(40)}…` })]))[0].label, `${'x'.repeat(29)}…`)
+})
+
 test('a workspace whose agent wrote a label over the limit still gets its card', () => {
   const offer = nextOffer(worktree([agent({ lastAssistantMessage: block([proposal({ label: 'mainAgent が working なら transcript を読まない' })]) })]))
   assert.equal(offer.suggestions.length, 1)

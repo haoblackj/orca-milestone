@@ -3,7 +3,8 @@
 // - a question: Claude Code's AskUserQuestion, as cards, or as a form for several questions or answers
 // - a permission: a tool waiting to be allowed, in Claude Code or Codex
 // - a restart: a waiting Claude session told something older than the plugin says now, see restart.mjs
-// The rules match agent-status-panel, which shows the same choices on a phone. The panel says only
+// The rules match agent-status-panel, which shows the same choices on a phone, except that a label over
+// its limit is shortened here instead of dropping the card (see labelOf). The panel says only
 // which offer and which card: the worker reads the agent again when one is pressed, so a card from
 // an earlier turn does nothing, and keys go to a menu only after its screen is read.
 import { createHash } from 'node:crypto'
