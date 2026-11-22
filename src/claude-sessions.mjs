@@ -37,26 +37,57 @@ export function isTaskListId(name) {
 
 const isRunning = (pid) => host().isRunning(pid)
 
+// What each session file held when it was last read, by folder, then file name: { mtimeMs, size, entry }.
+const sessionFiles = new Map()
+
+/**
+ * The parsed session files of a folder, keyed by file name. A machine keeps hundreds of them (186
+ * on one, of which 28 were live), and over a WSL share a read costs milliseconds, so one pass read
+ * one after another took 0.7 s and a refresh made three of them. A file is read again only when
+ * its modification time or size moved, and the stats go out all at once, which is 4 times faster
+ * there. A file that cannot be read, such as one caught mid-write, keeps what was known of it under
+ * its old time, so that it is read again next time; one that is gone is dropped.
+ * Rejects when the folder cannot be listed.
+ */
+async function readSessionFiles(sessionsRoot) {
+  const names = (await readdir(sessionsRoot)).filter((name) => /^\d+\.json$/.test(name))
+  const known = sessionFiles.get(sessionsRoot) ?? new Map()
+  const read = await Promise.all(
+    names.map(async (name) => {
+      const path = join(sessionsRoot, name)
+      const info = await stat(path).catch(() => null)
+      const cached = known.get(name)
+      if (info && cached && cached.mtimeMs === info.mtimeMs && cached.size === info.size) return cached
+      const entry = await readJson(path)
+      if (entry) return { mtimeMs: info?.mtimeMs, size: info?.size, entry }
+      return info ? (cached ?? null) : null
+    })
+  )
+  // Rebuilt in the order of the listing: the readers' results do not depend on which read ended first.
+  const files = new Map(names.flatMap((name, index) => (read[index] ? [[name, read[index]]] : [])))
+  sessionFiles.set(sessionsRoot, files)
+  return files
+}
+
+/** The entries of the session files whose pid runs now; asked on every read, as a pid ends without notice. */
+async function runningEntries(sessionsRoot, isSession) {
+  let files
+  try {
+    files = await readSessionFiles(sessionsRoot)
+  } catch {
+    return []
+  }
+  const entries = [...files.values()].map(({ entry }) => entry).filter((entry) => isSessionId(entry.sessionId) && Number.isInteger(entry.pid) && isSession(entry))
+  const running = await Promise.all(entries.map((entry) => isRunning(entry.pid)))
+  return entries.filter((_entry, index) => running[index])
+}
+
 /**
  * Ids of the Claude sessions running now. Each running session keeps
  * ~/.claude/sessions/<pid>.json, removed when it exits; the pid is checked in case it crashed.
  */
 export async function readRunningSessionIds(sessionsRoot) {
-  let names
-  try {
-    names = await readdir(sessionsRoot)
-  } catch {
-    return new Set()
-  }
-  const ids = new Set()
-  for (const name of names) {
-    if (!/^\d+\.json$/.test(name)) continue
-    const entry = await readJson(join(sessionsRoot, name))
-    if (entry && isSessionId(entry.sessionId) && Number.isInteger(entry.pid) && (await isRunning(entry.pid))) {
-      ids.add(entry.sessionId)
-    }
-  }
-  return ids
+  return new Set((await runningEntries(sessionsRoot, () => true)).map((entry) => entry.sessionId))
 }
 
 /**
@@ -65,33 +96,11 @@ export async function readRunningSessionIds(sessionsRoot) {
  * session leaves the files of its earlier processes behind (15 of 186 ids sit in several files on
  * one machine, some of them live), and a stale file must not hide the live one. Nothing checks the
  * pids; a stale file never changes again.
- * A file is read only when its modification time moved since the last call, as a poll of every file
- * would otherwise keep a WSL share busy. A file that cannot be read keeps what `known` has of it.
- * @param known the state kept between calls: file name to { mtimeMs, status }
  * @returns Map of file name to `<status>@<statusUpdatedAt>`; rejects when the folder cannot be listed
  */
-export async function readSessionStatuses(sessionsRoot, known = new Map()) {
-  const names = (await readdir(sessionsRoot)).filter((name) => /^\d+\.json$/.test(name))
-  const statuses = new Map()
-  await Promise.all(
-    names.map(async (name) => {
-      const path = join(sessionsRoot, name)
-      const mtimeMs = (await stat(path).catch(() => null))?.mtimeMs
-      const cached = known.get(name)
-      if (cached && cached.mtimeMs === mtimeMs) {
-        statuses.set(name, cached.status)
-        return
-      }
-      const entry = await readJson(path)
-      const status = entry ? `${entry.status}@${entry.statusUpdatedAt}` : cached?.status
-      if (status === undefined) return
-      // A torn write keeps the old state under the new time, so the file is read again next time.
-      known.set(name, { mtimeMs: entry ? mtimeMs : cached?.mtimeMs, status })
-      statuses.set(name, status)
-    })
-  )
-  for (const name of known.keys()) if (!statuses.has(name)) known.delete(name)
-  return statuses
+export async function readSessionStatuses(sessionsRoot) {
+  const files = await readSessionFiles(sessionsRoot)
+  return new Map([...files].map(([name, { entry }]) => [name, `${entry.status}@${entry.statusUpdatedAt}`]))
 }
 
 /** Whether the session that owns a task list (by its id, or a team's id prefix) is running. */
@@ -395,21 +404,8 @@ export async function readTranscriptHead(path) {
 
 /** The running Claude sessions with the folder each works in. */
 export async function readRunningSessions(sessionsRoot) {
-  let names
-  try {
-    names = await readdir(sessionsRoot)
-  } catch {
-    return []
-  }
-  const sessions = []
-  for (const name of names) {
-    if (!/^\d+\.json$/.test(name)) continue
-    const entry = await readJson(join(sessionsRoot, name))
-    if (entry && isSessionId(entry.sessionId) && Number.isInteger(entry.pid) && (await isRunning(entry.pid)) && typeof entry.cwd === 'string') {
-      sessions.push({ sessionId: entry.sessionId, cwd: entry.cwd, pid: entry.pid })
-    }
-  }
-  return sessions
+  const entries = await runningEntries(sessionsRoot, (entry) => typeof entry.cwd === 'string')
+  return entries.map((entry) => ({ sessionId: entry.sessionId, cwd: entry.cwd, pid: entry.pid }))
 }
 
 async function readTail(path) {

@@ -1,7 +1,8 @@
 import assert from 'node:assert/strict'
-import { mkdir, utimes, writeFile } from 'node:fs/promises'
+import { mkdir, rm, utimes, writeFile } from 'node:fs/promises'
 import { join } from 'node:path'
 import { test } from 'node:test'
+import { configureHost } from '../src/host.mjs'
 import {
   claudePaths,
   findListTranscript,
@@ -11,6 +12,7 @@ import {
   isListRunning,
   readPromptBeforeTask,
   readRunningSessionIds,
+  readRunningSessions,
   readSessionStatuses,
   readTasksFromTranscript,
   readTaskList,
@@ -186,25 +188,114 @@ test('readSessionStatuses reads again only a file whose time moved, and keeps wh
   const when = new Date('2026-01-01T00:00:00Z')
   await writeFile(file, JSON.stringify({ pid: 101, sessionId: SESSION_A, status: 'busy', statusUpdatedAt: 1 }))
   await utimes(file, when, when)
-  const known = new Map()
-  assert.equal((await readSessionStatuses(sessionsRoot, known)).get('101.json'), 'busy@1')
+  assert.equal((await readSessionStatuses(sessionsRoot)).get('101.json'), 'busy@1')
 
   // Same time: what is cached is used, so the file is not read.
   await writeFile(file, JSON.stringify({ pid: 101, sessionId: SESSION_A, status: 'idle', statusUpdatedAt: 2 }))
   await utimes(file, when, when)
-  assert.equal((await readSessionStatuses(sessionsRoot, known)).get('101.json'), 'busy@1')
+  assert.equal((await readSessionStatuses(sessionsRoot)).get('101.json'), 'busy@1')
 
   // A new time with a torn write: the known state stays rather than the session vanishing.
   await writeFile(file, '{"pid":')
-  assert.equal((await readSessionStatuses(sessionsRoot, known)).get('101.json'), 'busy@1')
+  assert.equal((await readSessionStatuses(sessionsRoot)).get('101.json'), 'busy@1')
 
   const later = new Date('2026-01-01T00:00:10Z')
   await writeFile(file, JSON.stringify({ pid: 101, sessionId: SESSION_A, status: 'idle', statusUpdatedAt: 3 }))
   await utimes(file, later, later)
-  assert.equal((await readSessionStatuses(sessionsRoot, known)).get('101.json'), 'idle@3')
+  assert.equal((await readSessionStatuses(sessionsRoot)).get('101.json'), 'idle@3')
 })
 
 test('readSessionStatuses rejects when the folder cannot be listed, so a failed read is not taken for no sessions', async () => {
   const home = await makeHome()
   await assert.rejects(readSessionStatuses(join(home, 'missing')))
+})
+
+// Over a WSL share every file read costs milliseconds, and the folder holds hundreds of files of
+// which most are stale, so what the three readers share is read again only when a file changed.
+async function sessionFolder(entry) {
+  const home = await makeHome()
+  const { sessionsRoot } = claudePaths(home)
+  await mkdir(sessionsRoot, { recursive: true })
+  const file = join(sessionsRoot, '101.json')
+  const at = (seconds) => new Date(Date.UTC(2026, 0, 1, 0, 0, seconds))
+  const write = async (text, seconds) => {
+    await writeFile(file, text)
+    await utimes(file, at(seconds), at(seconds))
+  }
+  await write(JSON.stringify({ pid: process.pid, sessionId: SESSION_A, ...entry }), 0)
+  return { sessionsRoot, file, write }
+}
+
+test('the running sessions and their ids are read again only when the file changed in time or size', async () => {
+  const { sessionsRoot, write } = await sessionFolder({ cwd: '/work/aaa' })
+  assert.deepEqual((await readRunningSessions(sessionsRoot)).map((entry) => entry.cwd), ['/work/aaa'])
+
+  // Same time and size, other content: the cache is used by both readers.
+  await write(JSON.stringify({ pid: process.pid, sessionId: SESSION_B, cwd: '/work/bbb' }), 0)
+  assert.deepEqual((await readRunningSessions(sessionsRoot)).map((entry) => entry.cwd), ['/work/aaa'])
+  assert.deepEqual([...(await readRunningSessionIds(sessionsRoot))], [SESSION_A])
+
+  await write(JSON.stringify({ pid: process.pid, sessionId: SESSION_B, cwd: '/work/bbb' }), 10)
+  assert.deepEqual((await readRunningSessions(sessionsRoot)).map((entry) => entry.cwd), ['/work/bbb'])
+  assert.deepEqual([...(await readRunningSessionIds(sessionsRoot))], [SESSION_B])
+
+  // Same time, another size: read again.
+  await write(JSON.stringify({ pid: process.pid, sessionId: SESSION_B, cwd: '/work/longer-than-before' }), 10)
+  assert.deepEqual((await readRunningSessions(sessionsRoot)).map((entry) => entry.cwd), ['/work/longer-than-before'])
+})
+
+test('a session file caught mid-write keeps its session listed, and a removed file drops it', async () => {
+  const { sessionsRoot, file, write } = await sessionFolder({ cwd: '/work/aaa' })
+  assert.equal((await readRunningSessions(sessionsRoot)).length, 1)
+
+  await write('{"pid":', 20)
+  assert.deepEqual((await readRunningSessions(sessionsRoot)).map((entry) => entry.cwd), ['/work/aaa'])
+  assert.deepEqual([...(await readRunningSessionIds(sessionsRoot))], [SESSION_A])
+
+  await write(JSON.stringify({ pid: process.pid, sessionId: SESSION_A, cwd: '/work/ccc' }), 30)
+  assert.deepEqual((await readRunningSessions(sessionsRoot)).map((entry) => entry.cwd), ['/work/ccc'])
+
+  await rm(file)
+  assert.deepEqual(await readRunningSessions(sessionsRoot), [])
+  assert.deepEqual([...(await readRunningSessionIds(sessionsRoot))], [])
+})
+
+test('whether the pid runs is asked on every read, not cached with the file', async () => {
+  const { sessionsRoot } = await sessionFolder({ cwd: '/work/aaa' })
+  let alive = true
+  configureHost({ isRunning: async () => alive })
+  try {
+    assert.equal((await readRunningSessions(sessionsRoot)).length, 1)
+    alive = false
+    assert.deepEqual(await readRunningSessions(sessionsRoot), [])
+    assert.equal((await readRunningSessionIds(sessionsRoot)).size, 0)
+    alive = true
+    assert.equal((await readRunningSessions(sessionsRoot)).length, 1)
+  } finally {
+    configureHost({})
+  }
+})
+
+test('the folder is listed once and its files are asked about all at once, not one after another', async () => {
+  const { sessionsRoot } = await sessionFolder({ cwd: '/work/aaa' })
+  for (let pid = 102; pid < 140; pid++) {
+    await writeFile(join(sessionsRoot, `${pid}.json`), JSON.stringify({ pid, sessionId: SESSION_B, cwd: `/work/${pid}` }))
+  }
+  let asking = 0
+  let most = 0
+  configureHost({
+    isRunning: async () => {
+      asking += 1
+      most = Math.max(most, asking)
+      await new Promise((resolve) => setTimeout(resolve, 5))
+      asking -= 1
+      return true
+    }
+  })
+  try {
+    assert.equal((await readRunningSessions(sessionsRoot)).length, 39)
+    assert.ok(most > 10, `the pids were asked ${most} at a time`)
+  } finally {
+    configureHost({})
+  }
 })

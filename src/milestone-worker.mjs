@@ -302,12 +302,11 @@ export function createMilestoneWorker({
   /** Asks Orca again whenever a session's busy or idle state moves; the first read only sets the baseline. */
   function pollSessionStatus() {
     let last = null
-    const known = new Map()
     const poll = async () => {
       try {
         const began = now()
         // A failed read keeps `last`: it is no sign that the sessions are gone.
-        const statuses = await readSessionStatuses(paths.sessionsRoot, known).catch(() => null)
+        const statuses = await readSessionStatuses(paths.sessionsRoot).catch(() => null)
         if (statuses) {
           const moved = last !== null && [...statuses].some(([file, status]) => last.get(file) !== status)
           last = statuses
