@@ -60,6 +60,8 @@ async function readSessionFiles(sessionsRoot) {
       if (info && cached && cached.mtimeMs === info.mtimeMs && cached.size === info.size) return cached
       const entry = await readJson(path)
       if (entry) return { mtimeMs: info?.mtimeMs, size: info?.size, entry }
+      // Kept even if the file stays unparsable: the pid check ends a session that is gone, and the
+      // file is read again on every call until it parses.
       return info ? (cached ?? null) : null
     })
   )

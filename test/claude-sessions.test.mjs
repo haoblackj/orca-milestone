@@ -276,7 +276,22 @@ test('whether the pid runs is asked on every read, not cached with the file', as
   }
 })
 
-test('the folder is listed once and its files are asked about all at once, not one after another', async () => {
+test('the running sessions follow the order of the folder listing, and a file holding no object breaks no reader', async () => {
+  const { sessionsRoot } = await sessionFolder({ cwd: '/work/first' })
+  const second = '2222222-2222-4222-8222-222222222222'.padStart(36, '0')
+  await writeFile(join(sessionsRoot, '102.json'), JSON.stringify({ pid: process.pid, sessionId: SESSION_B, cwd: '/work/second' }))
+  await writeFile(join(sessionsRoot, '103.json'), 'null')
+  await writeFile(join(sessionsRoot, '104.json'), '5')
+  await writeFile(join(sessionsRoot, '105.json'), '"text"')
+  await writeFile(join(sessionsRoot, '106.json'), JSON.stringify({ pid: process.pid, sessionId: second, cwd: 7 }))
+  for (let round = 0; round < 2; round++) {
+    assert.deepEqual((await readRunningSessions(sessionsRoot)).map((entry) => entry.cwd), ['/work/first', '/work/second'])
+    assert.deepEqual([...(await readRunningSessionIds(sessionsRoot))].sort(), [SESSION_A, SESSION_B, second].sort())
+    assert.deepEqual([...(await readSessionStatuses(sessionsRoot)).keys()].sort(), ['101.json', '102.json', '104.json', '105.json', '106.json'])
+  }
+})
+
+test('the pids of many session files are asked about all at once, not one after another', async () => {
   const { sessionsRoot } = await sessionFolder({ cwd: '/work/aaa' })
   for (let pid = 102; pid < 140; pid++) {
     await writeFile(join(sessionsRoot, `${pid}.json`), JSON.stringify({ pid, sessionId: SESSION_B, cwd: `/work/${pid}` }))
