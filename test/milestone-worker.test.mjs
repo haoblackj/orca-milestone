@@ -347,6 +347,62 @@ test('openWorkspace switches to the agent terminal of a workspace the host does 
   assert.match(logs.join('\n'), /no workspace to open at \/work\/gone/)
 })
 
+// Each CLI call costs 0.45-0.7 s from the worker under Orca for Windows: a press that first lists the
+// terminals takes 1.15 s to switch. The list is read after each refresh instead, off the press.
+test('openWorkspace switches at once to a terminal listed after the last refresh', async () => {
+  const orca = fakeOrca()
+  orca.host = { call: async () => ({ workspaces: [] }) }
+  const asked = []
+  let terminals = [{ handle: 'term_b', worktreePath: '/work/b', agentIdentity: 'claude', lastOutputAt: 1 }]
+  const gone = new Set()
+  const runCli = async (cli, args) => {
+    asked.push(args)
+    if (args[1] === 'list') return { ok: true, result: { terminals } }
+    if (gone.has(args[3])) throw new Error('terminal_handle_stale')
+    return { ok: true, result: { focus: { handle: args[3], navigated: true } } }
+  }
+  const settle = () => new Promise((resolve) => setImmediate(resolve))
+  const readOrca = async () => ({ active: { path: '/work/app', displayName: 'app', agentStates: [] }, agents: [] })
+  const worker = createMilestoneWorker({ orca, home: await makeHome(), cli: 'orca', runCli, readOrca, prefetchTerminals: true, watchDir: () => {} })
+
+  await worker.refresh(true)
+  await settle()
+  assert.deepEqual(asked, [['terminal', 'list', '--json']], 'listed once, after the refresh')
+
+  asked.length = 0
+  assert.deepEqual(await worker.openWorkspace('/work/b'), { opened: true })
+  assert.deepEqual(asked, [['terminal', 'switch', '--terminal', 'term_b', '--json']], 'only the switch on a press')
+
+  gone.add('term_b')
+  terminals = [{ handle: 'term_b2', worktreePath: '/work/b', agentIdentity: 'claude', lastOutputAt: 2 }]
+  asked.length = 0
+  assert.deepEqual(await worker.openWorkspace('/work/b'), { opened: true })
+  assert.deepEqual(
+    asked,
+    [
+      ['terminal', 'switch', '--terminal', 'term_b', '--json'],
+      ['terminal', 'list', '--json'],
+      ['terminal', 'switch', '--terminal', 'term_b2', '--json']
+    ],
+    'a stale handle lists the terminals again'
+  )
+})
+
+test('a refresh lists no terminals unless asked to', async () => {
+  const orca = fakeOrca()
+  const asked = []
+  const runCli = async (cli, args) => {
+    asked.push(args)
+    return { ok: true, result: { terminals: [] } }
+  }
+  const readOrca = async () => ({ active: { path: '/work/app', displayName: 'app', agentStates: [] }, agents: [] })
+  const worker = createMilestoneWorker({ orca, home: await makeHome(), cli: 'orca', runCli, readOrca, watchDir: () => {} })
+
+  await worker.refresh(true)
+  await new Promise((resolve) => setImmediate(resolve))
+  assert.deepEqual(asked, [])
+})
+
 // Orca for Windows sends no agent.status.changed for agents in WSL, so what a turn's end shows in
 // Claude's session file is what tells the worker to ask Orca again.
 test('a Claude session turning busy or idle asks Orca again; nothing changing does not', async () => {

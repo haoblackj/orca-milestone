@@ -37,6 +37,13 @@ const SYNC_MS = 30_000
 const DEBOUNCE_MS = 150
 const REQUEST_RETRY_MS = 30_000
 
+/** The terminal to show a workspace by: an agent's before a shell's, then the one that printed last. */
+function terminalAt(terminals, path) {
+  return terminals
+    .filter((candidate) => candidate.worktreePath === path)
+    .sort((a, b) => Number(Boolean(b.agentIdentity)) - Number(Boolean(a.agentIdentity)) || (b.lastOutputAt ?? 0) - (a.lastOutputAt ?? 0))[0]
+}
+
 export function createMilestoneWorker({
   orca,
   home,
@@ -50,6 +57,10 @@ export function createMilestoneWorker({
   // How often Claude's session files are read for a turn starting or ending, or null for never. Where
   // Orca sends no agent.status.changed (Orca for Windows, for agents in WSL) this is what notices the end of a turn.
   statusPollMs = null,
+  // Lists the terminals after each refresh that asks Orca, for a pressed row to switch to one at once.
+  // Where the host lists no workspace of the agents (Orca for Windows, for agents in WSL) a row
+  // opens only through a terminal, and each CLI call takes 0.45-0.7 s.
+  prefetchTerminals = false,
   // Writes the timing lines of trace() to the plugin log. They add a line per event and per refresh.
   trace: tracing = false
 }) {
@@ -68,6 +79,9 @@ export function createMilestoneWorker({
   let workspace = null
   let agents = []
   let offers = []
+  // The terminals of the latest listing, and the listing on its way, see prefetchTerminals.
+  let knownTerminals = []
+  let listing = null
   const runArgs = (args, timeout) => runCli(cli, args, timeout)
   // A question or a call waiting for permission is read from the transcript of Claude's session,
   // a Codex menu from the screen of its pane.
@@ -190,6 +204,28 @@ export function createMilestoneWorker({
     return { html: lastHtml ?? renderBody({ kind: 'no-workspace' }) }
   }
 
+  async function listTerminals() {
+    const { terminals = [] } = (await runArgs(['terminal', 'list', '--json']))?.result ?? {}
+    knownTerminals = terminals
+    return terminals
+  }
+
+  /** Lists the terminals in the background; one listing at a time. */
+  function prefetch() {
+    if (!prefetchTerminals || listing) return
+    listing = listTerminals()
+      .catch((error) => orca.log(`milestone: could not list the terminals: ${error.message}`))
+      .finally(() => {
+        listing = null
+      })
+  }
+
+  async function switchTo(terminal) {
+    const reply = await runArgs(['terminal', 'switch', '--terminal', terminal.handle, '--json'])
+    if (reply?.ok === false) throw new Error(reply.error?.message ?? 'orca terminal switch failed')
+    return reply
+  }
+
   /** Shows the workspace at a path. A pressed row may be stale by now, so a miss is only logged. */
   async function openWorkspace(path) {
     try {
@@ -202,15 +238,18 @@ export function createMilestoneWorker({
       // The host lists only the workspaces of the machine the worker runs on: none of a WSL distro
       // under Orca for Windows. The CLI, asked about that environment, switches the desktop to a
       // terminal of it, which shows its workspace. An agent's terminal shows the session itself.
-      const { terminals = [] } = (await runArgs(['terminal', 'list', '--json']))?.result ?? {}
-      const terminal = terminals
-        .filter((candidate) => candidate.worktreePath === path)
-        .sort((a, b) => Number(Boolean(b.agentIdentity)) - Number(Boolean(a.agentIdentity)) || (b.lastOutputAt ?? 0) - (a.lastOutputAt ?? 0))[0]
+      const known = terminalAt(knownTerminals, path)
+      if (known) {
+        const reply = await switchTo(known).catch(() => null)
+        // A terminal closed since it was listed: list them again.
+        if (reply) return { opened: reply.result?.focus?.navigated !== false }
+      }
+      const terminal = terminalAt(await listTerminals(), path)
       if (!terminal) {
         orca.log(`milestone: no workspace to open at ${path}`)
         return { opened: false }
       }
-      const reply = await runArgs(['terminal', 'switch', '--terminal', terminal.handle, '--json'])
+      const reply = await switchTo(terminal)
       return { opened: reply?.result?.focus?.navigated !== false }
     } catch (error) {
       orca.log(`milestone: could not open the workspace: ${error.message}`)
@@ -241,6 +280,7 @@ export function createMilestoneWorker({
         orca.log(`milestone: could not read the workspaces: ${error.message}`)
       }
       orcaMs = now() - started
+      prefetch()
     }
     const sessionsStarted = now()
     const sessions = await allSessions()
