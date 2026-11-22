@@ -82,6 +82,8 @@ export function createMilestoneWorker({
   // The terminals of the latest listing, and the listing on its way, see prefetchTerminals.
   let knownTerminals = []
   let listing = null
+  let listings = 0
+  let keptListing = 0
   const runArgs = (args, timeout) => runCli(cli, args, timeout)
   // A question or a call waiting for permission is read from the transcript of Claude's session,
   // a Codex menu from the screen of its pane.
@@ -205,8 +207,13 @@ export function createMilestoneWorker({
   }
 
   async function listTerminals() {
+    const started = ++listings
     const { terminals = [] } = (await runArgs(['terminal', 'list', '--json']))?.result ?? {}
-    knownTerminals = terminals
+    // A background listing can end after one a press started later: the later one is newer.
+    if (started > keptListing) {
+      keptListing = started
+      knownTerminals = terminals
+    }
     return terminals
   }
 
@@ -240,7 +247,10 @@ export function createMilestoneWorker({
       // terminal of it, which shows its workspace. An agent's terminal shows the session itself.
       const known = terminalAt(knownTerminals, path)
       if (known) {
-        const reply = await switchTo(known).catch(() => null)
+        const reply = await switchTo(known).catch((error) => {
+          orca.log(`milestone: could not switch to a listed terminal, listing again: ${error.message}`)
+          return null
+        })
         // A terminal closed since it was listed: list them again.
         if (reply) return { opened: reply.result?.focus?.navigated !== false }
       }

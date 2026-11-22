@@ -388,6 +388,38 @@ test('openWorkspace switches at once to a terminal listed after the last refresh
   )
 })
 
+test('a slow listing of the terminals holds no refresh back, runs one at a time, and an older one never wins', async () => {
+  const orca = fakeOrca()
+  orca.host = { call: async () => ({ workspaces: [] }) }
+  const asked = []
+  const pending = []
+  const runCli = async (cli, args) => {
+    asked.push(args)
+    if (args[1] === 'list') return new Promise((resolve) => pending.push(resolve))
+    return { ok: true, result: { focus: { handle: args[3], navigated: true } } }
+  }
+  const settle = () => new Promise((resolve) => setImmediate(resolve))
+  const readOrca = async () => ({ active: { path: '/work/app', displayName: 'app', agentStates: [] }, agents: [] })
+  const worker = createMilestoneWorker({ orca, home: await makeHome(), cli: 'orca', runCli, readOrca, prefetchTerminals: true, watchDir: () => {} })
+
+  await worker.refresh(true)
+  await worker.refresh(true)
+  assert.equal(orca.posts.length > 0, true, 'the refreshes published while the listing hangs')
+  assert.equal(asked.filter((args) => args[1] === 'list').length, 1, 'one listing at a time')
+
+  // A press lists anew while the background listing still hangs; the newer one answers first.
+  const pressed = worker.openWorkspace('/work/b')
+  await settle()
+  pending[1]({ ok: true, result: { terminals: [{ handle: 'term_new', worktreePath: '/work/b', agentIdentity: 'claude' }] } })
+  assert.deepEqual(await pressed, { opened: true })
+  pending[0]({ ok: true, result: { terminals: [{ handle: 'term_old', worktreePath: '/work/b', agentIdentity: 'claude' }] } })
+  await settle()
+
+  asked.length = 0
+  await worker.openWorkspace('/work/b')
+  assert.deepEqual(asked, [['terminal', 'switch', '--terminal', 'term_new', '--json']], 'the listing that started later is kept')
+})
+
 test('a refresh lists no terminals unless asked to', async () => {
   const orca = fakeOrca()
   const asked = []
