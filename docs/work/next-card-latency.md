@@ -47,6 +47,14 @@ Orca の Milestone パネルで、エージェントが回答の末尾に `next`
   - 実機のワーカーのログ全体（101 回の更新、新旧のコードが混ざる）では、`orca=` の中央値が 1.1 秒、90 パーセンタイルが 2.3 秒、最大が 3.1 秒。伸びた回は、数十秒の塊で現れ（フォーカスの変化、「次の作業」の送信、試験用の Claude の起動と重なる時間帯）、定常のベンチでは再現しない。
   - ばらつきの内訳としての結論: 伸びの原因は、Orca の `worktree ps` の処理そのものより、機械が忙しいときの Windows でのプロセスの起動（`ps`）と、WSL の共有越しのメタデータ操作（`readTurnEnded` の `open+stat` とセッション一覧）。端末の読みと transcript の読みの量ではない。
 
+- Orca の状態とセッションファイルの `status` の対応の実測（2026-11-22、Orca 1.4.269。背景のシェル `sleep 45` を動かす試験用の Claude 1 つを、起動から終了まで 0.2 秒おきに観測）。時刻はプロンプトを送ってからの秒数:
+  - 3.7 秒: `status` が busy、5.4 秒: Orca が `working`（`mainAgent` も `working`）。transcript に user の発言が出る。
+  - 10.3 秒: Orca の `mainAgent` が `done` になる（Orca 全体の `state` は `working` のまま。背景のシェルが動いているため）。このとき `status` は busy のまま。
+  - 12.0 秒（`mainAgent` の done から約 1.7 秒後）: `status` が `shell` に変わり、同時に transcript に `turn_duration` が出る。つまり `shell` が「エージェントのターンは終わり、背景のシェルが動いている」状態で、`readTurnEnded` が真になる場面と一致する。
+  - 約 50 秒: シェルが終わり、Claude が通知を受けて新しいターンを始める（Orca は `working`、`status` は busy）。56.3 秒に Orca が `done`、57.8 秒に `status` が `idle`、58.2 秒に `turn_duration`。
+  - 対応: `busy` は作業中、`shell` はターン終了と背景のシェル、`idle` はターン終了。`status` が変わるのは、Orca の `mainAgent` が `done` になった後で、1.4〜1.7 秒遅れる。許可待ちのときの値は、今回は許可の画面が出なかったので未確認。
+- 発見: `settleAgents` は `mainAgentDone(agent) ?? await readTurnEnded(...)` と書かれ、Orca が `mainAgent.state` を `working` と返す（エージェント本体が本当に作業中の）ときも `mainAgentDone` が null になり、右側の `readTurnEnded` が毎回走る。実機の Orca 1.4.269 は、Claude の全エージェントに `mainAgent` を付ける（現在の 7 件を確認）。`mainAgent` は transcript やセッションファイルより早くターンの終わりを示すので、`mainAgent.state` が `working` のときの transcript の読みは情報を足さない。
+
 ## 判断の経緯
 ### 2026-11-22 採用: 実機の計測用ログを足してから直す
 - 出どころ: Claude の判断
@@ -113,10 +121,10 @@ Orca の Milestone パネルで、エージェントが回答の末尾に `next`
 - パネルにカードが映るまでの目視（エージェントが一つだけのワークスペースで）。
 
 ## 次に Claude がすること
-- リーダーが指示したら、`readTurnEnded` の transcript の読みを、セッションファイルの `status` で置き換えられるかを調べる（背景のシェルが動いているときの `status` の値の確認から。置き換えられれば、作業中のエージェントごとの 0.13〜0.25 秒と、共有の遅い `open` が消える）。
+- リーダーが指示したら、`settleAgents` で、Orca が `mainAgent.state` が `working` と返しているエージェントについては `readTurnEnded` を呼ばないように、失敗するテストから直す（`mainAgent` が無い古い Orca と、`done` で時刻が無い場合は、今の transcript の読みに落とす）。
 
 ## リーダーに決めてほしいこと
-- `readTurnEnded`（作業中のエージェントごとに transcript を開いて末尾 1 MB を読む）を、セッションファイルの `status` で置き換える調査に進むか。Claude の案: 進む価値はある（更新の 0.13〜0.25 秒と、負荷時に 0.5〜2.6 秒まで伸びる部分が消える見込み）。トレードオフ: `status` が Orca の「作業中（背景のシェルが動いている）」と「本当に作業中」を区別できるかが未確認で、区別できなければ置き換えられない。答えで何が変わるか: 進まなければ、負荷時の伸びは残る。
+- `settleAgents` が、Orca が `mainAgent.state` を `working` と返しているエージェントにも `readTurnEnded`（transcript を開いて末尾 1 MB を読む）を呼んでいるのをやめるか。Claude の案: やめる（更新から 0.13〜0.25 秒と、負荷時に 0.5〜2.6 秒まで伸びる部分が消える。`mainAgent` は実機の Orca 1.4.269 で Claude の全エージェントに付き、transcript やセッションファイルより早く「本体は終わった」を示す）。トレードオフ: `mainAgent` を返さない古い Orca（1.4.257 より前）では今の読みに落とすので、そこでは変わらない。答えで何が変わるか: やめなければ、作業中のエージェントがあるあいだ、更新のたびに共有越しの遅い `open` が残る。
 - 既定ブランチへの取り込みは、上流の版が出たときの merge と合わせて決める（Claude の案）。
 
 ## 参照
