@@ -60,7 +60,7 @@ status: done
 - なし。下の問いにリーダーが答えたら、それに沿って進める。
 
 ## リーダーに決めてほしいこと
-- `wsl-host` を `main` へ取り込むか、いつ取り込むか（`docs/work/next-card-latency.md` の同じ問いと一つ）。Claude の案: 上流の版が出たときの merge と合わせて決める。答えで何が変わるか: 取り込まなければ、修正は `wsl-host` にだけ残る。
+- `wsl-host` を `main` へ取り込むか、いつ取り込むか（`docs/work/next-card-latency.md` の同じ問いと一つ。調べた事実と案はそちらに書いた）。Claude の案: 上流の v0.10.0 を `wsl-host` に merge してから、fork の中の PR で `main` に取り込む。答えで何が変わるか: 取り込まなければ、修正は `wsl-host` にだけ残る。
 
 ## 参照
 - `src/next-actions.mjs`（`LABEL_MAX`、`isSuggestion`、`parseSuggestions`）、`src/launch-hook.mjs`（エージェントへの指示文）、`panel/style.css`（`.action .label`）
