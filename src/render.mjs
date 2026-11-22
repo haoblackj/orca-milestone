@@ -93,7 +93,9 @@ function renderNext(offer) {
     const cards = offer.suggestions.map((s, index) =>
       card(offer.id, index, s.label, s.action === 'restart' ? [['detail', s.detail]] : [['reason', s.reason], ['prompt', clip(s.prompt, PROMPT_LINES_MAX)]])
     )
-    body = `<ol class="actions">${cards.join('')}</ol>`
+    // In a workspace of several agents, which one proposes.
+    const from = offer.from ? `<p class="where">${escape(offer.from)} から</p>` : ''
+    body = `${from}<ol class="actions">${cards.join('')}</ol>`
   }
   // What the rest of this turn allowed without a card, to be read afterwards.
   if (offer.allowed?.length > 0) {

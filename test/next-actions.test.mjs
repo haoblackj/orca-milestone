@@ -76,11 +76,29 @@ test('nextOffer comes from the one live main agent that finished its turn', () =
   const none = (wt) => assert.equal(nextOffer(wt), null)
   none(worktree([agent({ state: 'working' })]))
   none(worktree([agent({ lastAssistantMessage: 'no block' })]))
-  none(worktree([agent(), agent({ paneKey: 'tab:other' })]))
   none(worktree([agent({ agentType: 'gemini' })]))
   none(worktree([agent()], { isArchived: true }))
   // A closed pane's record and a teammate do not count as a second agent.
   assert.ok(nextOffer(worktree([agent(), agent({ paneKey: 'old', hasLivePty: undefined }), agent({ paneKey: 'mate', parentPaneKey: 'tab:leaf' })])))
+})
+
+// A card is sent to the pane of the agent that proposed it, so several agents in one workspace do not
+// mix their cards up; the card names its agent, for the user to tell them apart.
+test('in a workspace of several agents, the cards come from the one that finished its turn last, named', () => {
+  const notes = agent({ paneKey: 'tab:notes', conversationName: 'リリースノートを書く', stateStartedAt: 9 })
+  const busy = agent({ paneKey: 'tab:busy', conversationName: '整理', state: 'working', lastAssistantMessage: '' })
+  const offer = nextOffer(worktree([busy, notes]))
+  assert.equal(offer.paneKey, 'tab:notes')
+  assert.equal(offer.from, 'リリースノートを書く')
+
+  const older = agent({ paneKey: 'tab:older', conversationName: '前の作業', stateStartedAt: 3 })
+  assert.equal(nextOffer(worktree([older, notes])).paneKey, 'tab:notes', 'the turn that ended last')
+  assert.equal(nextOffer(worktree([agent({ paneKey: 'tab:notes', stateStartedAt: 9, lastAssistantMessage: 'no block' }), older])).paneKey, 'tab:older', 'one without cards gives way')
+  assert.equal(nextOffer(worktree([busy, agent({ paneKey: 'tab:quiet', lastAssistantMessage: 'no block' })])), null)
+  assert.equal(nextOffer(worktree([agent()])).from, undefined, 'one agent needs no name')
+
+  const shown = renderBody(buildModel({ path: '/work/app', displayName: 'app', agentStates: ['working', 'done'] }, [], [], [offer]))
+  assert.match(shown, /リリースノートを書く/)
 })
 
 function setupSender({ agentType = 'claude', screen = '? for shortcuts', accepted = true, terminals } = {}) {

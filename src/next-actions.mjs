@@ -107,11 +107,13 @@ export function parseSuggestions(message) {
  * than the one shown. Orca keeps the record of a pane that has closed, without hasLivePty.
  */
 function soleAgent(worktree) {
-  if (worktree.isArchived) return null
-  const agents = (worktree.agents ?? []).filter(
-    (agent) => TRACKED_AGENTS.has(agent.agentType) && !agent.parentPaneKey && agent.hasLivePty === true
-  )
+  const agents = liveAgents(worktree)
   return agents.length === 1 ? agents[0] : null
+}
+
+function liveAgents(worktree) {
+  if (worktree.isArchived) return []
+  return (worktree.agents ?? []).filter((agent) => TRACKED_AGENTS.has(agent.agentType) && !agent.parentPaneKey && agent.hasLivePty === true)
 }
 
 /** Changes with every turn and every call, so a card shown for an earlier one matches nothing. */
@@ -131,6 +133,8 @@ const RESTART_CARD = { label: '最新の指示で再開', action: 'restart', det
  * @param launch { sessionId } of that session, or null
  */
 export function nextOffer(worktree, launch = null) {
+  const agents = liveAgents(worktree)
+  if (agents.length > 1) return proposalAmong(worktree, agents)
   const agent = soleAgent(worktree)
   if (agent?.state !== 'done') return null
   const suggestions = parseSuggestions(agent.lastAssistantMessage)
@@ -138,6 +142,22 @@ export function nextOffer(worktree, launch = null) {
   if (restart) suggestions.push(RESTART_CARD)
   if (suggestions.length === 0) return null
   return { ...base('proposal', worktree, agent, restart ? launch.sessionId : ''), suggestions, ...(restart ? { sessionId: launch.sessionId } : {}) }
+}
+
+/**
+ * The proposals of the agent that ended its turn last, among several in one workspace, named after its
+ * conversation. A card is sent to the pane of the agent that proposed it, so the others never get it.
+ */
+function proposalAmong(worktree, agents) {
+  const proposing = agents
+    .filter((agent) => agent.state === 'done')
+    .map((agent) => ({ agent, suggestions: parseSuggestions(agent.lastAssistantMessage) }))
+    .filter(({ suggestions }) => suggestions.length > 0)
+    .sort((a, b) => (b.agent.stateStartedAt ?? 0) - (a.agent.stateStartedAt ?? 0))[0]
+  if (!proposing) return null
+  const { agent, suggestions } = proposing
+  const from = agent.conversationName ?? agent.displayName ?? agent.taskTitle ?? null
+  return { ...base('proposal', worktree, agent, ''), suggestions, ...(from ? { from } : {}) }
 }
 
 /** Only for the workspace on screen, the one whose cards show, and only while Claude waits idle. */
