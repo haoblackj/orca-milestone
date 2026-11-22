@@ -18,6 +18,8 @@ test('a plugin folder WSL serves to Windows gives the home, the environment and 
   assert.equal(wsl.home, String.raw`\\wsl.localhost\Ubuntu\home\alice`)
   assert.equal(wsl.environment, 'Ubuntu (WSL)')
   assert.equal(wsl.agentHome, '/home/alice')
+  // Orca sends no agent event for agents in WSL, so a turn's end is seen in the session files at this pace.
+  assert.equal(wsl.statusPollMs, 1_000)
   assert.equal(await wsl.isRunning(42), true)
   assert.equal(await wsl.isRunning(43), false)
   assert.equal(wslHostOf('/Users/alice/orca-milestone'), null)

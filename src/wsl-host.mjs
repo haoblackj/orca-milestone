@@ -18,6 +18,8 @@ export function wslHostOf(folder, { statOf = stat, pollMs = 3_000 } = {}) {
     agentHome: `/home/${user}`,
     // Orca names the environment of a WSL distro after it, as `orca environment list` shows.
     environment: `${distro} (WSL)`,
+    // How often the session files are read for a turn starting or ending (see statusPollMs of the worker).
+    statusPollMs: 1_000,
     isRunning: async (pid) => Boolean(await statOf(win32.join(root, 'proc', String(pid))).catch(() => null)),
     // fs.watch throws EISDIR on a WSL share: Windows gets no change notices from it. So the folder
     // is polled: the names and times of what it holds, a task list's time moving when Claude renames
