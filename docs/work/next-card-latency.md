@@ -104,8 +104,14 @@ Orca の Milestone パネルで、エージェントが回答の末尾に `next`
 - 理由: 提示した案（待ちを最大 2 秒から 1 秒に縮める）をリーダーが選んだ（理由の言及なし）。
 - 状態: 有効
 
+### 2026-11-22 採用: Orca が mainAgent.state を working と返しているエージェントには readTurnEnded を呼ばない
+- 出どころ: 端末からの入力（会話 9e2f38e8、2026-11-22 12:10、発言 bf4ee9b9）
+- 要旨（Claude の要約）: `settleAgents` で、`mainAgent.state` が `working` のエージェントには `readTurnEnded` を呼ばない。`mainAgent` が無い場合と、`done` で時刻が無い場合は、今の transcript の読みに落とす。失敗するテストから入り、実機で `readWorkspaces` の所要時間を測り直す。
+- 理由: 提示した案をリーダーが選んだ（理由の言及なし）。根拠は、Orca の `mainAgent` が transcript やセッションファイルより早くターンの終わりを示し、`working` のときの transcript の読みは情報を足さないこと。
+- 状態: 有効
+
 ## いまの作業
-遅れの調査と修正は、一通り済んだ。ローカルの `wsl-host`（テスト 114 件）は、セッションファイルの見張り、読みの共通化、確認間隔 1 秒を含み、Windows の Orca に読み込み済み。fork へは、このコミットまで push した（push の前に、差分、履歴、コミットの書き手を確かめた）。未決は、`mainAgent` が `working` のときの `readTurnEnded` を省くか（下の問い）と、既定ブランチへの取り込み。ラベルが長いカードが消える問題は、別の記録（`docs/work/next-label-limit.md`）で直した。
+`mainAgent` が `working` のときの `readTurnEnded` を省く修正を、テスト先行で入れ（`skip-turn-read`、テスト 115 件）、修正前後を実機と同じ条件で測った。まだ `wsl-host` にも実機の Orca にも入れていない（読み込み直しの承認を待っている）。fork へは、`wsl-host` の 16b8bdc まで push 済み。ラベルが長いカードが消える問題は、別の記録（`docs/work/next-label-limit.md`）で直した。
 
 ## 済んだこと
 - 経路をコードで追い、Orca の done の検知が速いことを確かめた。
@@ -116,15 +122,18 @@ Orca の Milestone パネルで、エージェントが回答の末尾に `next`
 - セッション読みの共通化を実機に読み込み、測り直した（done から更新の完了まで 4.74 秒、更新 1.38 秒）。
 - 確認間隔を 1 秒にする変更を、テスト先行で入れ（WSL ホストの設定 `statusPollMs` に移し、テストで固定）、実機で 3 回測り直した（done から更新の完了まで 4.69、4.05、3.19 秒、平均 3.98 秒）。
 
+- `mainAgent` が `working` のときの `readTurnEnded` を省く修正を、テスト先行で入れた（`skip-turn-read`、`orca-cli.mjs` の `itselfWorking`）。実機と同じ条件の測定（Orca 同梱の Node、作業中のエージェントが 1 つ）で `readWorkspaces` の所要時間は、定常（60 回）で中央値 690 ms から 464 ms、90 パーセンタイル 749 ms から 511 ms、最大 834 ms から 597 ms。試験用の Claude を 4 つ同時に起動・終了する負荷の下（110 回）で、中央値 680 ms から 469 ms、90 パーセンタイル 867 ms から 654 ms、最大 2818 ms から 964 ms。`readTurnEnded` の呼び出しは 0 回になった。残る時間は `orca worktree ps` だけで、負荷時の最大 964 ms もこれ。
+
 ## 残っていること
-- 既定ブランチへの取り込みの承認。
+- 省く修正を `wsl-host` に取り込み、実機の Orca に読み込む承認。fork への push の承認。
+- 既定ブランチへの取り込みの承認（取り込む前に、省く修正のコードレビュー）。
 - パネルにカードが映るまでの目視（エージェントが一つだけのワークスペースで）。
 
 ## 次に Claude がすること
-- リーダーが指示したら、`settleAgents` で、Orca が `mainAgent.state` が `working` と返しているエージェントについては `readTurnEnded` を呼ばないように、失敗するテストから直す（`mainAgent` が無い古い Orca と、`done` で時刻が無い場合は、今の transcript の読みに落とす）。
+- リーダーが承認したら、`wsl-host` を `skip-turn-read` まで進め、`orca.exe plugin dev reload` で読み込み直し、実際のワーカーのログ（`refresh` の `orca=`）で効果を確かめる。push の前に、差分と履歴に非公開の名前が無いかを確かめる。
 
 ## リーダーに決めてほしいこと
-- `settleAgents` が、Orca が `mainAgent.state` を `working` と返しているエージェントにも `readTurnEnded`（transcript を開いて末尾 1 MB を読む）を呼んでいるのをやめるか。Claude の案: やめる（更新から 0.13〜0.25 秒と、負荷時に 0.5〜2.6 秒まで伸びる部分が消える。`mainAgent` は実機の Orca 1.4.269 で Claude の全エージェントに付き、transcript やセッションファイルより早く「本体は終わった」を示す）。トレードオフ: `mainAgent` を返さない古い Orca（1.4.257 より前）では今の読みに落とすので、そこでは変わらない。答えで何が変わるか: やめなければ、作業中のエージェントがあるあいだ、更新のたびに共有越しの遅い `open` が残る。
+- 省く修正（`skip-turn-read`）を `wsl-host` に取り込んで実機に読み込み、fork に push してよいか。Claude の案: よい（テスト 115 件。`mainAgent` が無い古い Orca では、今の transcript の読みに落ちるので挙動は変わらない）。答えで何が変わるか: 承認がなければ、実機のワーカーでは、更新のたびに transcript の読みが残る。
 - 既定ブランチへの取り込みは、上流の版が出たときの merge と合わせて決める（Claude の案）。
 
 ## 参照
