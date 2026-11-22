@@ -305,3 +305,184 @@ test('openWorkspace opens the listed workspace at the path, and only logs a miss
   assert.deepEqual(await worker.openWorkspace('/work/a'), { opened: false })
   assert.match(logs.join('\n'), /could not open the workspace: refused/)
 })
+
+// Orca for Windows sends no agent.status.changed for agents in WSL, so what a turn's end shows in
+// Claude's session file is what tells the worker to ask Orca again.
+test('a Claude session turning busy or idle asks Orca again; nothing changing does not', async () => {
+  const home = await makeHome()
+  const sessionFile = await markRunning(home, SESSION_A)
+  const setStatus = (status, at) => writeFile(sessionFile, JSON.stringify({ pid: process.pid, sessionId: SESSION_A, cwd: '/work/app', status, statusUpdatedAt: at }))
+  await setStatus('busy', 1)
+  let asked = 0
+  const worker = createMilestoneWorker({
+    orca: fakeOrca(),
+    home,
+    cli: 'orca',
+    statusPollMs: 10,
+    readOrca: async () => {
+      asked += 1
+      return { active: null, agents: [] }
+    },
+    watchDir: () => {}
+  })
+  const until = async (done) => {
+    for (let waited = 0; waited < 3000 && !done(); waited += 10) await new Promise((resolve) => setTimeout(resolve, 10))
+  }
+
+  const timers = []
+  const realSetInterval = globalThis.setInterval
+  globalThis.setInterval = (...args) => {
+    const timer = realSetInterval(...args)
+    timers.push(timer)
+    return timer
+  }
+  try {
+    await worker.start()
+    assert.equal(asked, 1)
+    await new Promise((resolve) => setTimeout(resolve, 100))
+    assert.equal(asked, 1, 'an unchanged status is not a reason to ask')
+
+    await setStatus('idle', 2)
+    await until(() => asked > 1)
+    assert.equal(asked, 2, 'the turn ended: Orca is asked')
+  } finally {
+    globalThis.setInterval = realSetInterval
+    timers.forEach(clearInterval)
+  }
+})
+
+test('the plugin log gets no trace lines unless trace is on', async () => {
+  const home = await makeHome()
+  const lines = []
+  const worker = createMilestoneWorker({
+    orca: { ...fakeOrca(), log: (line) => lines.push(line) },
+    home,
+    cli: 'orca',
+    readOrca: async () => ({ active: null, agents: [] }),
+    watchDir: () => {}
+  })
+  worker.agentChanged({ paneKey: 'tab:leaf', state: 'done', mainAgent: { state: 'done' } })
+  await worker.refresh(true)
+  assert.deepEqual(lines, [])
+})
+
+test('without statusPollMs the session files are not watched', async () => {
+  const home = await makeHome()
+  const sessionFile = await markRunning(home, SESSION_A)
+  const setStatus = (status, at) => writeFile(sessionFile, JSON.stringify({ pid: process.pid, sessionId: SESSION_A, cwd: '/work/app', status, statusUpdatedAt: at }))
+  await setStatus('busy', 1)
+  let asked = 0
+  const timers = []
+  const realSetInterval = globalThis.setInterval
+  globalThis.setInterval = (...args) => {
+    const timer = realSetInterval(...args)
+    timers.push(timer)
+    return timer
+  }
+  try {
+    const worker = createMilestoneWorker({
+      orca: fakeOrca(),
+      home,
+      cli: 'orca',
+      readOrca: async () => {
+        asked += 1
+        return { active: null, agents: [] }
+      },
+      watchDir: () => {}
+    })
+    await worker.start()
+    await setStatus('idle', 2)
+    await new Promise((resolve) => setTimeout(resolve, 150))
+    assert.equal(asked, 1)
+  } finally {
+    globalThis.setInterval = realSetInterval
+    timers.forEach(clearInterval)
+  }
+})
+
+test('the watch of the session files goes on when the log throws, and a session that appears asks Orca too', async () => {
+  const home = await makeHome()
+  const sessionFile = await markRunning(home, SESSION_A)
+  const setStatus = (file, id, status, at) => writeFile(file, JSON.stringify({ pid: process.pid, sessionId: id, cwd: '/work/app', status, statusUpdatedAt: at }))
+  await setStatus(sessionFile, SESSION_A, 'busy', 1)
+  let asked = 0
+  const timers = []
+  const realSetInterval = globalThis.setInterval
+  globalThis.setInterval = (...args) => {
+    const timer = realSetInterval(...args)
+    timers.push(timer)
+    return timer
+  }
+  try {
+    const worker = createMilestoneWorker({
+      orca: {
+        ...fakeOrca(),
+        log: () => {
+          throw new Error('log is gone')
+        }
+      },
+      home,
+      cli: 'orca',
+      trace: true,
+      statusPollMs: 10,
+      readOrca: async () => {
+        asked += 1
+        return { active: null, agents: [] }
+      },
+      watchDir: () => {}
+    })
+    const until = async (done) => {
+      for (let waited = 0; waited < 3000 && !done(); waited += 10) await new Promise((resolve) => setTimeout(resolve, 10))
+    }
+    await worker.start()
+    await setStatus(sessionFile, SESSION_A, 'idle', 2)
+    await until(() => asked > 1)
+    assert.equal(asked, 2)
+
+    const second = await markRunning(home, SESSION_B)
+    await setStatus(second, SESSION_B, 'busy', 3)
+    await until(() => asked > 2)
+    assert.equal(asked, 3)
+  } finally {
+    globalThis.setInterval = realSetInterval
+    timers.forEach(clearInterval)
+  }
+})
+
+test('trace lines tell when an event arrived, what asked for a refresh, and how long each part took', async () => {
+  const home = await makeHome()
+  const lines = []
+  const orca = { ...fakeOrca(), log: (line) => lines.push(line) }
+  await writeTranscript(home, SESSION_A, { cwd: '/work/app', prompt: 'Trace me' })
+  await writeTasks(home, SESSION_A, [task(1, 'Step', 'in_progress')])
+  let clock = 1_000
+  const worker = createMilestoneWorker({
+    orca,
+    home,
+    cli: 'orca',
+    trace: true,
+    now: () => (clock += 10),
+    readOrca: async () => ({
+      active: { path: '/work/app', displayName: 'app', agentStates: ['done'] },
+      agents: [],
+      offers: [{ kind: 'proposal', id: 'a', path: '/work/app', agent: 'claude', paneKey: 'p', suggestions: [] }]
+    }),
+    watchDir: () => {}
+  })
+
+  worker.agentChanged({ paneKey: 'tab:leaf', state: 'done', mainAgent: { state: 'done' } })
+  // The same state again is heard but changes nothing.
+  worker.agentChanged({ paneKey: 'tab:leaf', state: 'done', mainAgent: { state: 'done' } })
+  await worker.refresh(true)
+
+  const trace = lines.filter((line) => line.startsWith('milestone: trace '))
+  assert.ok(trace.some((line) => line.includes('event agent.status.changed') && line.includes('pane=tab:leaf') && line.includes('state=done') && line.includes('changed=true')))
+  assert.ok(trace.some((line) => line.includes('event agent.status.changed') && line.includes('changed=false')))
+  const refreshed = trace.find((line) => line.includes('refresh'))
+  assert.ok(refreshed, 'a refresh is traced')
+  assert.match(refreshed, /asked=true/)
+  assert.match(refreshed, /orca=\d+ms/)
+  assert.match(refreshed, /sessions=\d+ms/)
+  assert.match(refreshed, /offers=1/)
+  assert.match(refreshed, /published=true/)
+})

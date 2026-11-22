@@ -59,6 +59,41 @@ export async function readRunningSessionIds(sessionsRoot) {
   return ids
 }
 
+/**
+ * What each session file says its session is doing: `busy` or `idle`, with when that began. Claude
+ * updates it as a turn starts and ends. The map is keyed by file name, not session id: a resumed
+ * session leaves the files of its earlier processes behind (15 of 186 ids sit in several files on
+ * one machine, some of them live), and a stale file must not hide the live one. Nothing checks the
+ * pids; a stale file never changes again.
+ * A file is read only when its modification time moved since the last call, as a poll of every file
+ * would otherwise keep a WSL share busy. A file that cannot be read keeps what `known` has of it.
+ * @param known the state kept between calls: file name to { mtimeMs, status }
+ * @returns Map of file name to `<status>@<statusUpdatedAt>`; rejects when the folder cannot be listed
+ */
+export async function readSessionStatuses(sessionsRoot, known = new Map()) {
+  const names = (await readdir(sessionsRoot)).filter((name) => /^\d+\.json$/.test(name))
+  const statuses = new Map()
+  await Promise.all(
+    names.map(async (name) => {
+      const path = join(sessionsRoot, name)
+      const mtimeMs = (await stat(path).catch(() => null))?.mtimeMs
+      const cached = known.get(name)
+      if (cached && cached.mtimeMs === mtimeMs) {
+        statuses.set(name, cached.status)
+        return
+      }
+      const entry = await readJson(path)
+      const status = entry ? `${entry.status}@${entry.statusUpdatedAt}` : cached?.status
+      if (status === undefined) return
+      // A torn write keeps the old state under the new time, so the file is read again next time.
+      known.set(name, { mtimeMs: entry ? mtimeMs : cached?.mtimeMs, status })
+      statuses.set(name, status)
+    })
+  )
+  for (const name of known.keys()) if (!statuses.has(name)) known.delete(name)
+  return statuses
+}
+
 /** Whether the session that owns a task list (by its id, or a team's id prefix) is running. */
 export function isListRunning(listId, runningIds) {
   if (isSessionId(listId)) return runningIds.has(listId)

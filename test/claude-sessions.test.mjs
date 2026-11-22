@@ -11,6 +11,7 @@ import {
   isListRunning,
   readPromptBeforeTask,
   readRunningSessionIds,
+  readSessionStatuses,
   readTasksFromTranscript,
   readTaskList,
   readTranscriptHead
@@ -148,4 +149,62 @@ test('readTasksFromTranscript replays the list, starting over once a finished li
     [['3', 'B1', 'in_progress'], ['4', 'B2 renamed', 'pending']]
   )
   assert.deepEqual([tasks[0].activeForm, tasks[0].metadata], ['Doing B1', { goal: 'B' }])
+})
+
+test('readSessionStatuses gives each session file its busy or idle state and when it changed, and skips what is no session file', async () => {
+  const home = await makeHome()
+  const { sessionsRoot } = claudePaths(home)
+  await mkdir(sessionsRoot, { recursive: true })
+  await writeFile(join(sessionsRoot, '101.json'), JSON.stringify({ pid: 101, sessionId: SESSION_A, status: 'busy', statusUpdatedAt: 5 }))
+  await writeFile(join(sessionsRoot, '102.json'), JSON.stringify({ pid: 102, sessionId: SESSION_B, status: 'idle', statusUpdatedAt: 9 }))
+  await writeFile(join(sessionsRoot, '104.json'), 'not json')
+  await writeFile(join(sessionsRoot, '101.abc.key'), '{}')
+  const statuses = await readSessionStatuses(sessionsRoot)
+  assert.deepEqual([...statuses].sort(), [['101.json', 'busy@5'], ['102.json', 'idle@9']])
+})
+
+test('readSessionStatuses keeps a session whose id sits in several files, since a resumed session leaves its old files behind', async () => {
+  const home = await makeHome()
+  const { sessionsRoot } = claudePaths(home)
+  await mkdir(sessionsRoot, { recursive: true })
+  // The live file sorts first and the stale one last: neither may hide the other.
+  await writeFile(join(sessionsRoot, '200.json'), JSON.stringify({ pid: 200, sessionId: SESSION_A, status: 'busy', statusUpdatedAt: 1 }))
+  await writeFile(join(sessionsRoot, '900.json'), JSON.stringify({ pid: 900, sessionId: SESSION_A, status: 'idle', statusUpdatedAt: 0 }))
+  const before = await readSessionStatuses(sessionsRoot)
+  await writeFile(join(sessionsRoot, '200.json'), JSON.stringify({ pid: 200, sessionId: SESSION_A, status: 'idle', statusUpdatedAt: 2 }))
+  const after = await readSessionStatuses(sessionsRoot)
+  assert.equal(before.get('200.json'), 'busy@1')
+  assert.equal(after.get('200.json'), 'idle@2')
+  assert.equal(after.get('900.json'), 'idle@0')
+})
+
+test('readSessionStatuses reads again only a file whose time moved, and keeps what it knew of a file it fails to read', async () => {
+  const home = await makeHome()
+  const { sessionsRoot } = claudePaths(home)
+  await mkdir(sessionsRoot, { recursive: true })
+  const file = join(sessionsRoot, '101.json')
+  const when = new Date('2026-01-01T00:00:00Z')
+  await writeFile(file, JSON.stringify({ pid: 101, sessionId: SESSION_A, status: 'busy', statusUpdatedAt: 1 }))
+  await utimes(file, when, when)
+  const known = new Map()
+  assert.equal((await readSessionStatuses(sessionsRoot, known)).get('101.json'), 'busy@1')
+
+  // Same time: what is cached is used, so the file is not read.
+  await writeFile(file, JSON.stringify({ pid: 101, sessionId: SESSION_A, status: 'idle', statusUpdatedAt: 2 }))
+  await utimes(file, when, when)
+  assert.equal((await readSessionStatuses(sessionsRoot, known)).get('101.json'), 'busy@1')
+
+  // A new time with a torn write: the known state stays rather than the session vanishing.
+  await writeFile(file, '{"pid":')
+  assert.equal((await readSessionStatuses(sessionsRoot, known)).get('101.json'), 'busy@1')
+
+  const later = new Date('2026-01-01T00:00:10Z')
+  await writeFile(file, JSON.stringify({ pid: 101, sessionId: SESSION_A, status: 'idle', statusUpdatedAt: 3 }))
+  await utimes(file, later, later)
+  assert.equal((await readSessionStatuses(sessionsRoot, known)).get('101.json'), 'idle@3')
+})
+
+test('readSessionStatuses rejects when the folder cannot be listed, so a failed read is not taken for no sessions', async () => {
+  const home = await makeHome()
+  await assert.rejects(readSessionStatuses(join(home, 'missing')))
 })

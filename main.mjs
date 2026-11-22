@@ -18,6 +18,8 @@ export default function activate(orca) {
     cli: resolveOrcaCli(),
     ...(wsl && {
       watchDir: wsl.watchDir,
+      statusPollMs: 2_000,
+      trace: true,
       runCli: (cli, args, timeout) => runOrca(cli, [...args, '--environment', wsl.environment], timeout),
       // The id of the focused workspace is the worktreeId `orca worktree ps` gives it.
       readFocusedId: async () => (await orca.host.call('workspace.readContext'))?.workspaceId ?? null
@@ -41,6 +43,6 @@ export default function activate(orca) {
   })
   orca.events.on('workspace.changed', async () => {
     await worker.start()
-    worker.schedule(true)
+    worker.schedule(true, 'workspace.changed')
   })
 }

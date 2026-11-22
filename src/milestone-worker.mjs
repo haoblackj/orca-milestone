@@ -10,6 +10,7 @@ import {
   currentGoal,
   isListRunning,
   readRunningSessionIds,
+  readSessionStatuses,
   readTasksFromTranscript,
   listRecentTaskLists,
   readPromptBeforeTask,
@@ -45,7 +46,12 @@ export function createMilestoneWorker({
   now = Date.now,
   // Which workspace is focused when Orca marks none active, see readWorkspaces.
   readFocusedId,
-  watchDir = (dir, onChange) => watch(dir, { recursive: true }, onChange)
+  watchDir = (dir, onChange) => watch(dir, { recursive: true }, onChange),
+  // How often Claude's session files are read for a turn starting or ending, or null for never. Where
+  // Orca sends no agent.status.changed (Orca for Windows, for agents in WSL) this is what notices the end of a turn.
+  statusPollMs = null,
+  // Writes the timing lines of trace() to the plugin log. They add a line per event and per refresh.
+  trace: tracing = false
 }) {
   const paths = claudePaths(home)
   const { tasksRoot } = paths
@@ -170,10 +176,12 @@ export function createMilestoneWorker({
     return isFinished(previous) ? previous : []
   }
 
+  /** Whether the body differed and was posted. */
   function publish(html) {
-    if (html === lastHtml) return
+    if (html === lastHtml) return false
     lastHtml = html
     orca.panels.post('view.changed', { html })
+    return true
   }
 
   /** What a panel shows when it opens; it starts the worker's refreshes if nothing has yet. */
@@ -199,7 +207,20 @@ export function createMilestoneWorker({
     }
   }
 
+  // Wall-clock lines in the plugin log (`orca plugin logs`), to set against Claude's transcript times:
+  // what a card waits for is not visible from outside the worker.
+  function trace(line) {
+    if (!tracing) return
+    try {
+      orca.log(`milestone: trace t=${now()} ${line}`)
+    } catch {
+      // A log that fails must not stop what it only describes.
+    }
+  }
+
   async function refreshOnce(askOrca) {
+    const started = now()
+    let orcaMs = 0
     if (askOrca || !workspace) {
       try {
         let found
@@ -208,9 +229,13 @@ export function createMilestoneWorker({
       } catch (error) {
         orca.log(`milestone: could not read the workspaces: ${error.message}`)
       }
+      orcaMs = now() - started
     }
+    const sessionsStarted = now()
     const sessions = await allSessions()
-    publish(renderBody(buildModel(workspace, sessions, agents, offers)))
+    const sessionsMs = now() - sessionsStarted
+    const changed = publish(renderBody(buildModel(workspace, sessions, agents, offers)))
+    trace(`refresh asked=${Boolean(askOrca)} orca=${orcaMs}ms sessions=${sessionsMs}ms offers=${offers.length} published=${changed}`)
   }
 
   /** Runs refreshes one at a time; a request during a run starts one more afterwards. */
@@ -250,7 +275,7 @@ export function createMilestoneWorker({
   async function sendNext(request) {
     try {
       const result = await sendOffer(request)
-      if (result.sent) schedule(true)
+      if (result.sent) schedule(true, 'next-sent')
       return result
     } catch (error) {
       orca.log(`milestone: could not send the next step: ${error.message}`)
@@ -258,7 +283,8 @@ export function createMilestoneWorker({
     }
   }
 
-  function schedule(focusChanged = false) {
+  function schedule(focusChanged = false, source = 'unknown') {
+    trace(`schedule source=${source} askOrca=${focusChanged}`)
     pendingFocus ||= focusChanged
     clearTimeout(timer)
     timer = setTimeout(() => void refresh(), DEBOUNCE_MS)
@@ -266,20 +292,46 @@ export function createMilestoneWorker({
 
   function agentChanged({ paneKey, state, mainAgent }) {
     const key = `${state}\n${mainAgent?.state ?? ''}`
-    if (paneStates.get(paneKey) === key) return
+    const changed = paneStates.get(paneKey) !== key
+    trace(`event agent.status.changed pane=${paneKey} state=${state} main=${mainAgent?.state ?? ''} changed=${changed}`)
+    if (!changed) return
     paneStates.set(paneKey, key)
-    schedule(true)
+    schedule(true, 'agent.status.changed')
+  }
+
+  /** Asks Orca again whenever a session's busy or idle state moves; the first read only sets the baseline. */
+  function pollSessionStatus() {
+    let last = null
+    const known = new Map()
+    const poll = async () => {
+      try {
+        const began = now()
+        // A failed read keeps `last`: it is no sign that the sessions are gone.
+        const statuses = await readSessionStatuses(paths.sessionsRoot, known).catch(() => null)
+        if (statuses) {
+          const moved = last !== null && [...statuses].some(([file, status]) => last.get(file) !== status)
+          last = statuses
+          if (moved) schedule(true, `session-status poll=${now() - began}ms`)
+        }
+      } catch (error) {
+        orca.log(`milestone: could not watch the sessions: ${error.message}`)
+      } finally {
+        setTimeout(poll, statusPollMs).unref?.()
+      }
+    }
+    void poll()
   }
 
   function start() {
     started ??= (async () => {
       await mkdir(tasksRoot, { recursive: true })
       await mkdir(progressRoot, { recursive: true })
+      if (statusPollMs) pollSessionStatus()
       watchDir(tasksRoot, (_event, name) => {
-        if (name && !String(name).endsWith('.lock')) schedule()
+        if (name && !String(name).endsWith('.lock')) schedule(false, 'tasks-changed')
       })
-      watchDir(progressRoot, () => schedule())
-      setInterval(() => schedule(true), SYNC_MS)
+      watchDir(progressRoot, () => schedule(false, 'progress-changed'))
+      setInterval(() => schedule(true, 'sync-interval'), SYNC_MS)
       await refresh(true)
     })()
     return started
