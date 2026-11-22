@@ -130,3 +130,4 @@ Orca の Milestone パネルで、エージェントが回答の末尾に `next`
 ## 参照
 - 上流: https://github.com/andoshin11/orca-milestone
 - README「表示の細かいルール」の次の作業のカードの項
+- 関連する記録: `docs/work/next-label-limit.md`（長いラベルのカードが消える問題。上限を超えたラベルを切り詰める修正を、実機に読み込み済み）
