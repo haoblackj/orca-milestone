@@ -99,6 +99,18 @@ function itselfWorking(agent) {
 }
 
 /**
+ * When the agent's turn ended (as `readTurnEnded` below resolves), or null: Orca's word first, the
+ * transcript only when Orca does not say. When `mainAgent` stays `working` after the turn ended (Orca
+ * missed the end), the transcript is not read and the agent stays working until Orca updates it.
+ */
+async function turnEnded(agent, path, readTurnEnded) {
+  const done = mainAgentDone(agent)
+  if (done !== null) return done
+  if (itselfWorking(agent)) return null
+  return readTurnEnded(path).catch(() => null)
+}
+
+/**
  * The workspaces with each Claude agent that Orca calls working but whose turn is over marked as
  * done, and `background`: shells it started go on running, and it waits for the user. Its proposals
  * then show as for any agent that finished. Its `stateStartedAt` becomes the end of the turn: Orca's
@@ -110,7 +122,7 @@ export async function settleAgents(worktrees, readTurnEnded) {
   const settled = []
   for (const worktree of worktrees) {
     const working = mainAgents(worktree).filter((agent) => agent.agentType === 'claude' && agent.state === 'working' && agent.hasLivePty === true)
-    const ended = working.length !== 1 ? null : (mainAgentDone(working[0]) ?? (itselfWorking(working[0]) ? null : await readTurnEnded(worktree.path).catch(() => null)))
+    const ended = working.length === 1 ? await turnEnded(working[0], worktree.path, readTurnEnded) : null
     if (!ended) {
       settled.push(worktree)
       continue
