@@ -195,12 +195,23 @@ export function createMilestoneWorker({
     try {
       const { workspaces } = await orca.host.call('workspace.list')
       const target = workspaces.find((candidate) => candidate.path === path)
-      if (!target) {
+      if (target) {
+        await orca.host.call('workspace.open', { workspaceId: target.id })
+        return { opened: true }
+      }
+      // The host lists only the workspaces of the machine the worker runs on: none of a WSL distro
+      // under Orca for Windows. The CLI, asked about that environment, switches the desktop to a
+      // terminal of it, which shows its workspace. An agent's terminal shows the session itself.
+      const { terminals = [] } = (await runArgs(['terminal', 'list', '--json']))?.result ?? {}
+      const terminal = terminals
+        .filter((candidate) => candidate.worktreePath === path)
+        .sort((a, b) => Number(Boolean(b.agentIdentity)) - Number(Boolean(a.agentIdentity)) || (b.lastOutputAt ?? 0) - (a.lastOutputAt ?? 0))[0]
+      if (!terminal) {
         orca.log(`milestone: no workspace to open at ${path}`)
         return { opened: false }
       }
-      await orca.host.call('workspace.open', { workspaceId: target.id })
-      return { opened: true }
+      const reply = await runArgs(['terminal', 'switch', '--terminal', terminal.handle, '--json'])
+      return { opened: reply?.result?.focus?.navigated !== false }
     } catch (error) {
       orca.log(`milestone: could not open the workspace: ${error.message}`)
       return { opened: false }

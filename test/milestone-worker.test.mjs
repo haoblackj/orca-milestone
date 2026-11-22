@@ -291,7 +291,8 @@ test('openWorkspace opens the listed workspace at the path, and only logs a miss
       }
     }
   }
-  const worker = createMilestoneWorker({ orca, home: await makeHome(), cli: 'orca', watchDir: () => {} })
+  const runCli = async () => ({ ok: true, result: { terminals: [] } })
+  const worker = createMilestoneWorker({ orca, home: await makeHome(), cli: 'orca', runCli, watchDir: () => {} })
 
   assert.deepEqual(await worker.openWorkspace('/work/b'), { opened: true })
   assert.deepEqual(calls.at(-1), ['workspace.open', { workspaceId: 'identity:b' }])
@@ -304,6 +305,46 @@ test('openWorkspace opens the listed workspace at the path, and only logs a miss
   fail = true
   assert.deepEqual(await worker.openWorkspace('/work/a'), { opened: false })
   assert.match(logs.join('\n'), /could not open the workspace: refused/)
+})
+
+// Orca for Windows runs the worker on Windows, and its workspace.list holds none of the workspaces of
+// a WSL distro. The Orca CLI, asked about that environment, switches the desktop to one of its terminals.
+test('openWorkspace switches to the agent terminal of a workspace the host does not list', async () => {
+  const orca = fakeOrca()
+  const logs = []
+  orca.log = (line) => logs.push(line)
+  orca.host = { call: async () => ({ workspaces: [] }) }
+  const asked = []
+  const terminals = [
+    { handle: 'term_other', worktreePath: '/work/other', agentIdentity: 'claude', lastOutputAt: 9 },
+    { handle: 'term_shell', worktreePath: '/work/b', lastOutputAt: 8 },
+    { handle: 'term_old', worktreePath: '/work/b', agentIdentity: 'claude', lastOutputAt: 3 },
+    { handle: 'term_new', worktreePath: '/work/b', agentIdentity: 'codex', lastOutputAt: 5 }
+  ]
+  let navigated = true
+  const runCli = async (cli, args) => {
+    asked.push(args)
+    if (args[0] === 'terminal' && args[1] === 'list') return { ok: true, result: { terminals } }
+    if (args[0] === 'terminal' && args[1] === 'switch') return { ok: true, result: { focus: { handle: args[3], navigated } } }
+    throw new Error(`unexpected ${args.join(' ')}`)
+  }
+  const worker = createMilestoneWorker({ orca, home: await makeHome(), cli: 'orca', runCli, watchDir: () => {} })
+
+  assert.deepEqual(await worker.openWorkspace('/work/b'), { opened: true })
+  assert.deepEqual(asked.at(-1), ['terminal', 'switch', '--terminal', 'term_new', '--json'], 'the agent terminal that printed last')
+
+  terminals.splice(2, 2)
+  asked.length = 0
+  assert.deepEqual(await worker.openWorkspace('/work/b'), { opened: true })
+  assert.deepEqual(asked.at(-1), ['terminal', 'switch', '--terminal', 'term_shell', '--json'], 'any terminal of it, without an agent')
+
+  navigated = false
+  assert.deepEqual(await worker.openWorkspace('/work/b'), { opened: false })
+
+  asked.length = 0
+  assert.deepEqual(await worker.openWorkspace('/work/gone'), { opened: false })
+  assert.deepEqual(asked, [['terminal', 'list', '--json']])
+  assert.match(logs.join('\n'), /no workspace to open at \/work\/gone/)
 })
 
 // Orca for Windows sends no agent.status.changed for agents in WSL, so what a turn's end shows in
