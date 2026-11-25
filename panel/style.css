@@ -122,6 +122,7 @@ code { font-size: 12px; }
 .next .allowed p { margin: 0 0 4px; font-weight: 600; }
 .next .allowed ul { margin: 0; padding-left: 16px; overflow-wrap: anywhere; }
 .next .where { margin: -4px 0 8px; font-size: 12px; color: var(--orca-muted-foreground); overflow-wrap: anywhere; }
+.next + .next { margin-top: 14px; }
 .next .from { margin: 0 0 8px; font-size: 12px; color: var(--orca-muted-foreground); overflow-wrap: anywhere; }
 .action.armed { background: color-mix(in oklch, var(--ms-todo) 16%, var(--orca-card));
   border-color: color-mix(in oklch, var(--ms-todo) 60%, transparent); }

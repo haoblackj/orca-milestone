@@ -99,7 +99,7 @@ test('the panel shows a bot’s page with its tasks and its cards to read, and m
 
 test('a chat’s form shows its options without a send button', () => {
   const offer = { kind: 'form', id: 'f', chat: true, questions: [{ question: 'Which?', multiSelect: true, options: [{ label: 'A', detail: '' }, { label: 'B', detail: 'b' }] }] }
-  const html = renderBody({ kind: 'no-tasks', workspace: 'Compass', bot: true, agent: 'waiting', sessions: [], next: offer, others: { attention: 0, rows: [] } })
+  const html = renderBody({ kind: 'no-tasks', workspace: 'Compass', bot: true, agent: 'waiting', sessions: [], next: [offer], others: { attention: 0, rows: [] } })
   assert.ok(html.includes('<div class="action shown"><span class="label">B</span><span class="detail">b</span></div>'))
   assert.ok(!html.includes('data-form='))
   assert.ok(!html.includes('data-submit='))

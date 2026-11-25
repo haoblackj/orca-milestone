@@ -5,7 +5,8 @@
 //   drop the ticks, so they are kept per form and put back after every patch (`restore`).
 // - Allowing a dangerous command takes two presses: the first only asks for the second.
 // - Cards that just came take no presses for a moment (`settling`). Answering one permission often
-//   puts the next in the same place, and a quick second click would answer that one unread.
+//   puts the next in the same place, and a quick second click would answer that one unread. So do
+//   cards that moved to another place, as those of several agents do when one of these goes on.
 // Listeners sit on the root, so they keep working however the cards are patched.
 
 export const SETTLE_MS = 1500
@@ -41,21 +42,25 @@ function offerOf(element) {
 export function sendOnPress(root, send, { now = () => Date.now(), settleMs = SETTLE_MS, later = setTimeout } = {}) {
   // Ticks per form, by offer: an array of option sets, one per question.
   const picks = new Map()
-  // When each offer on screen first showed.
+  // When each offer on screen first showed at its place among the others, `{ at, place }`.
   const arrived = new Map()
   let busy = false
 
-  const settling = (offer) => now() - (arrived.get(offer) ?? -Infinity) < settleMs
+  const settling = (offer) => now() - (arrived.get(offer)?.at ?? -Infinity) < settleMs
   // Cards already there when this starts listening did not just come.
-  for (const element of root.querySelectorAll('[data-next], [data-form], [data-submit]')) arrived.set(offerOf(element), -Infinity)
+  shownOffers().forEach((offer, place) => arrived.set(offer, { at: -Infinity, place }))
 
-  /** Notes the offers that just came, and marks their cards while they take no presses. */
+  function shownOffers() {
+    return [...new Set([...root.querySelectorAll('[data-next], [data-form], [data-submit]')].map(offerOf))]
+  }
+
+  /** Notes the offers that just came or moved, and marks their cards while they take no presses. */
   function settle() {
-    const shown = new Set([...root.querySelectorAll('[data-next], [data-form], [data-submit]')].map(offerOf))
-    for (const offer of arrived.keys()) if (!shown.has(offer)) arrived.delete(offer)
-    for (const offer of shown) {
-      if (arrived.has(offer)) continue
-      arrived.set(offer, now())
+    const shown = shownOffers()
+    for (const offer of arrived.keys()) if (!shown.includes(offer)) arrived.delete(offer)
+    for (const [place, offer] of shown.entries()) {
+      if (arrived.get(offer)?.place === place) continue
+      arrived.set(offer, { at: now(), place })
       later(settle, settleMs + 50)
     }
     for (const next of root.querySelectorAll('.next')) {

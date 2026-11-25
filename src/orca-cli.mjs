@@ -122,12 +122,18 @@ export async function settleAgents(worktrees, readTurnEnded) {
   const settled = []
   for (const worktree of worktrees) {
     const working = mainAgents(worktree).filter((agent) => agent.agentType === 'claude' && agent.state === 'working' && agent.hasLivePty === true)
-    const ended = working.length === 1 ? await turnEnded(working[0], worktree.path, readTurnEnded) : null
-    if (!ended) {
+    const ended = new Map()
+    for (const agent of working) {
+      // The transcript is found by the workspace, so it says nothing of one among several agents.
+      const at = working.length === 1 ? await turnEnded(agent, worktree.path, readTurnEnded) : mainAgentDone(agent)
+      if (at) ended.set(agent, at)
+    }
+    if (ended.size === 0) {
       settled.push(worktree)
       continue
     }
-    settled.push({ ...worktree, agents: worktree.agents.map((agent) => (agent === working[0] ? { ...agent, state: 'done', background: true, ...(typeof ended === 'number' ? { stateStartedAt: ended } : {}) } : agent)) })
+    const settle = (agent) => ({ ...agent, state: 'done', background: true, ...(typeof ended.get(agent) === 'number' ? { stateStartedAt: ended.get(agent) } : {}) })
+    settled.push({ ...worktree, agents: worktree.agents.map((agent) => (ended.has(agent) ? settle(agent) : agent)) })
   }
   return settled
 }

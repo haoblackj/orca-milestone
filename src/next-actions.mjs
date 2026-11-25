@@ -114,7 +114,7 @@ function isChat(agent) {
 /**
  * The one live main agent of a workspace, or null. A question or a call waiting for permission is
  * read from the session of the workspace, which with two agents may not be the one that waits.
- * Proposals take any of several, see proposalAmong. A chat has no pty at all: it counts only where
+ * Proposals take each of several, see proposalsAmong. A chat has no pty at all: it counts only where
  * no terminal agent runs, and only alone.
  */
 function soleAgent(worktree) {
@@ -146,14 +146,12 @@ function base(kind, worktree, agent, extra) {
 const RESTART_CARD = { label: '最新の指示で再開', action: 'restart', detail: '同じ会話のまま、いまの plugin の指示で起動し直します' }
 
 /**
- * What a workspace's agent proposes now: only one that finished its turn. A Claude session told
+ * What a workspace's one agent proposes now: only one that finished its turn. A Claude session told
  * something older gets one more card, to start it again under what the plugin says now.
  * @param launch { sessionId } of that session, or null
  * @param reply  the whole of what a Claude agent in a chat last said, of which Orca keeps only the start
  */
 export function nextOffer(worktree, launch = null, reply = null) {
-  const agents = liveAgents(worktree)
-  if (agents.length > 1) return proposalAmong(worktree, agents)
   const agent = soleAgent(worktree)
   if (agent?.state !== 'done') return null
   const suggestions = parseSuggestions(reply ?? agent.lastAssistantMessage)
@@ -164,20 +162,22 @@ export function nextOffer(worktree, launch = null, reply = null) {
 }
 
 /**
- * The proposals of the agent that ended its turn last, among several in one workspace, named after its
- * conversation. A card is sent to the pane of the agent that proposed it, so the others never get it.
+ * The proposals of each of several agents in one workspace, the last to end its turn first, each named
+ * after its conversation. A card is sent to the pane of the agent that proposed it, so the others never get it.
  */
-function proposalAmong(worktree, agents) {
-  const proposing = agents
+function proposalsAmong(worktree) {
+  const agents = liveAgents(worktree)
+  if (agents.length < 2) return []
+  return agents
     .filter((agent) => agent.state === 'done')
     .map((agent) => ({ agent, suggestions: parseSuggestions(agent.lastAssistantMessage) }))
     .filter(({ suggestions }) => suggestions.length > 0)
-    .sort((a, b) => (b.agent.stateStartedAt ?? 0) - (a.agent.stateStartedAt ?? 0))[0]
-  if (!proposing) return null
-  const { agent, suggestions } = proposing
-  const name = agent.conversationName ?? agent.displayName ?? agent.taskTitle
-  const from = typeof name === 'string' && name.trim() ? shorten(name, FROM_MAX) : null
-  return { ...base('proposal', worktree, agent, ''), suggestions, ...(from ? { from } : {}) }
+    .sort((a, b) => (b.agent.stateStartedAt ?? 0) - (a.agent.stateStartedAt ?? 0))
+    .map(({ agent, suggestions }) => {
+      const name = agent.conversationName ?? agent.displayName ?? agent.taskTitle
+      const from = typeof name === 'string' && name.trim() ? shorten(name, FROM_MAX) : null
+      return { ...base('proposal', worktree, agent, ''), suggestions, ...(from ? { from } : {}) }
+    })
 }
 
 /**
@@ -390,17 +390,21 @@ async function codexPermissionOffer(worktree, readPane) {
  * @param readReply    resolves a workspace path and the start of what its chat's agent said to the whole reply
  */
 export async function offersOf(worktrees, { readQuestion = async () => null, readCall = async () => null, readPane = async () => null, readLaunch = async () => null, readLaunchInfo = async () => null, readAllowed = async () => [], readReply = async () => null } = {}) {
+  const soleOffer = async (worktree) =>
+    nextOffer(worktree, await launchOf(worktree, readLaunch), await chatReplyOf(worktree, readReply)) ??
+    (await questionOffer(worktree, readQuestion)) ??
+    (await permissionOffer(worktree, readCall, readPane, readLaunchInfo)) ??
+    (await codexPermissionOffer(worktree, readPane))
   const offers = []
   for (const worktree of worktrees) {
-    const offer =
-      nextOffer(worktree, await launchOf(worktree, readLaunch), await chatReplyOf(worktree, readReply)) ??
-      (await questionOffer(worktree, readQuestion)) ??
-      (await permissionOffer(worktree, readCall, readPane, readLaunchInfo)) ??
-      (await codexPermissionOffer(worktree, readPane))
-    if (!offer) continue
-    // What the rest of this turn allowed unread, listed for the workspace on screen.
-    const allowed = worktree.isActive && offer.agent === 'claude' && !offer.chat ? await allowedOf(worktree, readLaunchInfo, readAllowed) : []
-    offers.push(allowed.length > 0 ? { ...offer, allowed } : offer)
+    const among = proposalsAmong(worktree)
+    const found = among.length > 0 ? among : [await soleOffer(worktree)]
+    for (const offer of found) {
+      if (!offer) continue
+      // What the rest of this turn allowed unread, listed for the workspace on screen.
+      const allowed = worktree.isActive && offer.agent === 'claude' && !offer.chat ? await allowedOf(worktree, readLaunchInfo, readAllowed) : []
+      offers.push(allowed.length > 0 ? { ...offer, allowed } : offer)
+    }
   }
   return offers
 }

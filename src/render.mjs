@@ -83,8 +83,7 @@ const CHAT_NOTE = '<p class="chat-note">このエージェントは Orca のチ�
  * tool waiting for permission. A card says which offer and which card; the worker reads the agent
  * again when it is pressed.
  */
-function renderNext(offer) {
-  if (!offer) return ''
+function renderNext(offer, position) {
   let heading
   let body
   if (offer.kind === 'form') {
@@ -119,6 +118,8 @@ function renderNext(offer) {
   }
   if (offer.chat) body += CHAT_NOTE
   // Another offer is another set of cards: it replaces the old one without a transition.
+  // Several agents of a workspace offer only proposals, and one heading stands for them all.
+  if (position > 0) heading = ''
   return `<div class="next ${offer.kind}${offer.chat ? ' chat' : ''}" data-key="${escape(`next\n${offer.id}`)}">${heading}${body}</div>`
 }
 
@@ -223,7 +224,7 @@ function renderFocused(model) {
   const host = model.host ? `<span class="host">${escape(model.host)}</span>` : ''
   const header = `<header><h1>${escape(model.workspace)}${model.bot ? BOT_MARK : ''}${host}</h1><span class="agent ${model.agent}">${agent}</span></header>`
   if (model.kind === 'no-tasks') {
-    return `${header}<p class="empty">このワークスペースのエージェントはまだタスクを作っていません。</p>${renderNext(model.next)}`
+    return `${header}<p class="empty">このワークスペースのエージェントはまだタスクを作っていません。</p>${model.next.map(renderNext).join('')}`
   }
-  return header + model.sessions.map(renderSession).join('') + renderNext(model.next)
+  return header + model.sessions.map(renderSession).join('') + model.next.map(renderNext).join('')
 }

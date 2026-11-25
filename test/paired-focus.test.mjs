@@ -43,7 +43,7 @@ test('a focused workspace of a paired server shows its tasks and cards at the to
   assert.equal(model.kind, 'sessions')
   assert.equal(model.workspace, 'rate limit')
   assert.equal(model.agent, 'waiting')
-  assert.equal(model.next.id, 'o-a')
+  assert.equal(model.next[0].id, 'o-a')
   assert.deepEqual(model.remote.sessions.map((s) => s.id), ['b'])
   const html = renderBody(model)
   assert.ok(html.startsWith('<main class="paired"><header><h1>rate limit<span class="host">Mac mini</span></h1>'))

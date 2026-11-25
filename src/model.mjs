@@ -102,7 +102,7 @@ export function buildModel(workspace, sessions, agents = [], offers = []) {
           ? workspace.background ? 'background' : 'idle'
           : 'none',
     sessions: mine,
-    next: offers.find((offer) => offer.path === workspace.path) ?? null,
+    next: offers.filter((offer) => offer.path === workspace.path),
     others
   }
 }
@@ -128,7 +128,7 @@ export function withPairedFocus(model, context, remote) {
     host: remote.label,
     agent: mine.some((session) => session.attention) ? 'waiting' : 'none',
     sessions: lists,
-    next: mine.find((session) => session.offer)?.offer ?? null,
+    next: mine.filter((session) => session.offer).map((session) => session.offer).slice(0, 1),
     others: model.others,
     remote: { ...remote, sessions: others }
   }

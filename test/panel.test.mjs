@@ -191,3 +191,37 @@ test('a card that just came in the place of the answered one takes no presses fo
   await flush()
   assert.deepEqual(requests[1], { offer: 'second', index: 1 })
 })
+
+test('cards that moved to another place among those of several agents take no presses for a moment', async () => {
+  const { sendOnPress } = await import('../panel/next.mjs')
+  const cards = (...offers) => `<main>${offers.map((offer) => `<div class="next" data-key="next\n${offer}"><ol class="actions"><li><button data-next="${offer}" data-index="0">続ける</button></li></ol></div>`).join('')}</main>`
+  const root = body('')
+  let time = 0
+  const requests = []
+  const presses = sendOnPress(root, async (request) => {
+    requests.push(request)
+    return { sent: true }
+  }, { now: () => time, settleMs: 1500, later: () => {} })
+  const show = (...offers) => {
+    patchChildren(root, cards(...offers))
+    presses.restore()
+  }
+  const settling = () => [...root.querySelectorAll('.next')].map((next) => next.classList.contains('settling'))
+
+  show('a', 'b', 'c')
+  time = 2000
+  show('a', 'b', 'c')
+  assert.deepEqual(settling(), [false, false, false])
+
+  // The agent of `b` went on: `c` is now where `b` was.
+  show('a', 'c')
+  assert.deepEqual(settling(), [false, true])
+  root.querySelectorAll('[data-next]')[1].click()
+  await new Promise((resolve) => setTimeout(resolve, 0))
+  assert.deepEqual(requests, [], 'a click meant for the card before it')
+
+  time = 3500
+  root.querySelectorAll('[data-next]')[1].click()
+  await new Promise((resolve) => setTimeout(resolve, 0))
+  assert.deepEqual(requests, [{ offer: 'c', index: 0 }])
+})
