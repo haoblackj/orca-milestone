@@ -115,7 +115,7 @@ async function turnEnded(agent, path, readTurnEnded) {
  * done, and `background`: shells it started go on running, and it waits for the user. Its proposals
  * then show as for any agent that finished. Its `stateStartedAt` becomes the end of the turn: Orca's
  * stays where the shells began, and the cards of every later turn would get the ids of the first.
- * An agent Orca calls done keeps that time too: Orca was seen to count done from 60-118 s after the
+ * An agent Orca calls done keeps that time too: Orca was seen to count done from about 60 s after the
  * end of the turn, with no turn between, and the cards of one turn would change ids and places.
  * @param readTurnEnded resolves a workspace path to when its Claude session ended its turn (true when
  *   the time is unknown), or null

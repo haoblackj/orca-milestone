@@ -19,7 +19,7 @@ status: active
 - Milestone の単位はタブでなくワークスペースで、上流は、動いているエージェントが 1 つのワークスペースにだけカードを出す（README の「できること」と `soleAgent`）。
 - いま開いているタブを知る方法は、調べた範囲では見つからなかった。Orca 1.4.274 の host API の型では、`workspace.readContext` と `workspace.changed` が返すのはフォーカス中のワークスペースとターミナルの一覧までで、どれが前面かを含まない。CLI は、WSL の環境の `orca terminal show` が `no_active_terminal` を返し、`orca terminal list` にも前面を示す項目が無い（2026-11-25）。
 - コードレビュー（8df41b7 から 1dc2c3a と、merge の解決）の判定は「マージしてよい」。前提を崩す指摘、Critical、Important は無く、Minor が 4 件（どれも 07383a9 で直した）。
-- Orca は、Claude を done とした時刻（`stateStartedAt`）を、ターンの終わりから 60〜118 秒遅れて数えることがある（done の 19 件のうち 5 件）。`mainAgent` の時刻は、transcript の最後の回答から約 0.1 秒後で、遅れた時刻までのあいだに新しいターンは無かった。遅れる理由は確かめていない。
+- Orca は、Claude を done とした時刻（`stateStartedAt`）を、ターンの終わりから約 60 秒遅れて数えることがある（done の 19 件のうち 4 件。ほかに約 118 秒ずれた 1 件は、返答の無い会話で、同じ事象かは分からない）。`mainAgent` の時刻は、transcript の最後の回答から約 0.1 秒後で、遅れた時刻までのあいだに新しいターンは無かった。遅れる理由は確かめていない。
 - 動いているエージェント 22 件のうち 3 件は、会話の名前を一つも持たなかった（2026-11-25）。
 - `next` を入力欄の上のボタンにする Mod は、Orca の中では出ない（動いている Claude のプロセスがすべて出さない条件に当たり、全ターミナルの画面にも出ていない。2026-11-25）。リーダーが邪魔だと言った表示は、回答の末尾に見える `next` の JSON だった（選択肢の問いへの答え）。
 - Claude Code の Mod の `AssistantMessage` の描画フックで、回答の `next` のブロックを画面からだけ隠せる。試しの Mod（scratchpad）を Haiku のセッションに差し込むと、画面の回答からブロックが消え、transcript と Orca の `lastAssistantMessage` には残った（Claude Code 2.1.330、Orca のターミナル、2026-11-25）。だから Milestone のカードは出せる。ストリーミング中の見え方と、履歴の再表示は確かめていない。
@@ -58,14 +58,14 @@ status: active
 - 状態: 有効
 
 ## いまの作業
-pull request のレビューと、`wsl-host` への取り込みの承認を待っている。JSON を隠す動作は、Mod のリポジトリのセッションへ SendMessage で渡した。
+`wsl-host` への取り込みの承認を待っている。JSON を隠す動作は、Mod のリポジトリのセッションへ SendMessage で渡した。
 
 ## 済んだこと
 - ローカルの `main` を上流の v0.13.1（8785476）まで進めた。
 - 上流の v0.13.1 を merge した（8df41b7）。
 - pull request: https://github.com/haoblackj/orca-milestone/pull/1（`wsl-host` 向け）。
 - 修正（1dc2c3a）。
-- レビューの Minor 4 件の直し（07383a9、テスト 146 件）。直した後も、2 つのタブの両方が `next` を書き終えているワークスペースのカードは、2 つのエージェントの分になった。
+- レビューの Minor 4 件の直し（07383a9）。同じレビュアーの再レビューの判定は「マージしてよい」で、前提を崩す指摘、Critical、Important は無い。指摘された、危険なコマンドの 2 回押しなどを固定するテストを足し、コメントの値を直した（テスト 149 件）。直した後も、2 つのタブの両方が `next` を書き終えているワークスペースのカードは、2 つのエージェントの分になった。
 
 ## 残っていること
 - `wsl-host` への取り込みと、実機の Orca への読み込み直し。

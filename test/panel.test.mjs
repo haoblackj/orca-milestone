@@ -285,3 +285,79 @@ test('what became of a press stays shown when another agent’s cards come above
   at('a')[1].click()
   assert.equal(requests.length, 2)
 })
+
+/** A panel whose sends are answered by hand, and whose offers come and go. */
+async function pressPanel() {
+  const { sendOnPress } = await import('../panel/next.mjs')
+  const root = body('')
+  const panel = { root, requests: [], answer: null, time: 0 }
+  const presses = sendOnPress(root, (request) => {
+    panel.requests.push(request)
+    return new Promise((resolve) => (panel.answer = resolve))
+  }, { now: () => panel.time, settleMs: 1500, later: () => {} })
+  panel.show = (html) => {
+    patchChildren(root, `<main>${html}</main>`)
+    presses.restore()
+    panel.time += 2000
+  }
+  panel.reply = async (result) => {
+    panel.answer(result)
+    await new Promise((resolve) => setTimeout(resolve, 0))
+  }
+  return panel
+}
+
+test('a dangerous command takes two presses again after a refusal, a redraw keeps the first, and its going away forgets it', async () => {
+  const panel = await pressPanel()
+  const { root, requests } = panel
+  const html = '<div class="next" data-key="p"><button class="action" data-next="p" data-index="0" data-dangerous="1">許可</button><button class="action" data-next="p" data-index="1">拒否</button></div>'
+  const armed = () => [...root.querySelectorAll('[data-next]')].map((card) => card.classList.contains('armed'))
+  const allow = () => root.querySelector('[data-dangerous]').click()
+
+  panel.show(html)
+  allow()
+  assert.deepEqual([requests.length, armed()], [0, [true, false]])
+  panel.show(html)
+  assert.deepEqual(armed(), [true, false])
+  panel.show('')
+  panel.show(html)
+  assert.deepEqual([armed(), root.querySelector('.status')], [[false, false], null])
+
+  allow()
+  allow()
+  assert.deepEqual(requests, [{ offer: 'p', index: 0, confirmed: true }])
+  await panel.reply({ sent: false, reason: 'failed' })
+  assert.deepEqual(armed(), [false, false])
+  allow()
+  assert.deepEqual([requests.length, armed()], [1, [true, false]], 'asks for the second press again')
+  allow()
+  assert.equal(requests.length, 2)
+  await panel.reply({ sent: false, reason: 'confirm' })
+  assert.deepEqual(armed(), [true, false])
+  allow()
+  assert.equal(requests.length, 3, 'the one who answers asked for this press')
+})
+
+test('cards that go away while one is sent come back still taken, and a form on its way has no button to press', async () => {
+  const panel = await pressPanel()
+  const { root, requests } = panel
+  const card = '<div class="next" data-key="a"><button class="action" data-next="a" data-index="0">A</button></div>'
+  panel.show(card)
+  root.querySelector('[data-next]').click()
+  panel.show('')
+  panel.show(card)
+  root.querySelector('[data-next]').click()
+  assert.equal(requests.length, 1)
+  await panel.reply({ sent: true })
+
+  panel.show('<div class="next" data-key="f"><button class="action option" data-form="f" data-question="0" data-option="1" data-multi="0">B</button><button class="submit" data-submit="f" data-count="1" disabled>回答を送信</button></div>')
+  const submit = root.querySelector('[data-submit]')
+  root.querySelector('[data-option]').click()
+  assert.equal(submit.disabled, false)
+  submit.click()
+  assert.equal(submit.disabled, true)
+  await panel.reply({ sent: false, reason: 'failed' })
+  assert.equal(submit.disabled, false, 'the answers are kept')
+  submit.click()
+  assert.deepEqual(requests.slice(1), [{ offer: 'f', answers: [[1]] }, { offer: 'f', answers: [[1]] }])
+})
