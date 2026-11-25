@@ -26,9 +26,9 @@ test('a plugin folder WSL serves to Windows gives the home, the environment and 
 })
 
 const ENVIRONMENTS = [
-  { name: 'build box', endpoints: [] },
-  { name: 'Empty (WSL)', orcadDeployment: { kind: 'wsl', distro: 'Empty' } },
-  { name: 'Ubuntu (WSL)', orcadDeployment: { kind: 'wsl', distro: 'Ubuntu' } }
+  { id: 'b1', name: 'build box', endpoints: [] },
+  { id: 'wsl:empty', name: 'Empty (WSL)', orcadDeployment: { kind: 'wsl', distro: 'Empty' } },
+  { id: 'wsl:ubuntu', name: 'Ubuntu (WSL)', orcadDeployment: { kind: 'wsl', distro: 'Ubuntu' } }
 ]
 const INSTALLED = String.raw`C:\Users\alice\AppData\Roaming\orca\plugins\andoshin11.milestone`
 const FILES = {
@@ -46,7 +46,8 @@ const listing = (environments) => async () => ({ ok: true, result: { environment
 
 test('installed on Windows, the plugin finds the distro Orca runs and the home in it that Claude uses', async () => {
   const wsl = await findWslHost(INSTALLED, { platform: 'win32', listEnvironments: listing(ENVIRONMENTS), readNames })
-  assert.equal(wsl.environment, 'Ubuntu (WSL)')
+  // The id stays when the environment is renamed.
+  assert.equal(wsl.environment, 'wsl:ubuntu')
   assert.equal(wsl.home, String.raw`\\wsl.localhost\Ubuntu\home\alice`)
   assert.equal(wsl.agentHome, '/home/alice')
 })
@@ -64,15 +65,36 @@ test('installed on Windows without a distro that has agents, the plugin runs for
   assert.equal(await find(ENVIRONMENTS.slice(0, 2)), null)
 })
 
-// Taken for a Windows without WSL, it would show nothing until the next start of the worker.
-test('the plugin does not start when Orca does not say which environments it has, or the only distro cannot be read', async () => {
+// Taken for a Windows without WSL, it would show nothing of the agents until the next start of the worker.
+test('the search fails when Orca does not say which environments it has, or the only distro cannot be read', async () => {
   const failing = { platform: 'win32', readNames }
   await assert.rejects(findWslHost(INSTALLED, { ...failing, listEnvironments: async () => { throw new Error('runtime_unavailable') } }), /runtime_unavailable/)
   await assert.rejects(findWslHost(INSTALLED, { ...failing, listEnvironments: async () => ({ ok: false, error: { message: 'no runtime' } }) }), /no runtime/)
-  const stopped = { name: 'Stopped (WSL)', orcadDeployment: { kind: 'wsl', distro: 'Stopped' } }
+  const stopped = { id: 'wsl:stopped', name: 'Stopped (WSL)', orcadDeployment: { kind: 'wsl', distro: 'Stopped' } }
   await assert.rejects(findWslHost(INSTALLED, { ...failing, listEnvironments: listing([stopped]) }), /ENOENT/)
   const found = await findWslHost(INSTALLED, { ...failing, listEnvironments: listing([stopped, ...ENVIRONMENTS]) })
-  assert.equal(found.environment, 'Ubuntu (WSL)')
+  assert.equal(found.environment, 'wsl:ubuntu')
+})
+
+test('the search fails, and does not take the agents for those of Windows, when a home cannot be read for the moment', async () => {
+  const failsWith = (code) => async (dir) => {
+    if (dir.endsWith('alice')) throw Object.assign(new Error(code), { code })
+    return readNames(dir)
+  }
+  const find = (code) => findWslHost(INSTALLED, { platform: 'win32', listEnvironments: listing(ENVIRONMENTS.slice(2)), readNames: failsWith(code) })
+  await assert.rejects(find('EIO'), /EIO/)
+  assert.equal(await find('EACCES'), null, 'the home of someone else')
+})
+
+test('the search fails when the share does not answer in time', async () => {
+  const pending = () => new Promise(() => {})
+  await assert.rejects(findWslHost(INSTALLED, { platform: 'win32', listEnvironments: listing(ENVIRONMENTS), readNames: pending, readMs: 5 }), /did not answer/)
+})
+
+test('installed on Windows, the plugin takes a home only Codex uses too', async () => {
+  const names = async (dir) => (dir.endsWith('home') ? ['alice'] : ['.codex'])
+  const wsl = await findWslHost(INSTALLED, { platform: 'win32', listEnvironments: listing(ENVIRONMENTS), readNames: names })
+  assert.equal(wsl.agentHome, '/home/alice')
 })
 
 // Orca stops a plugin whose new version asks for more until a person allows it.

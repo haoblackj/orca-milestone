@@ -19,26 +19,35 @@ export function wslHostOf(folder, options) {
   return hostIn(distro, user, `${distro} (WSL)`, options)
 }
 
+// What says that a home has nothing for the plugin, unlike an error of the moment.
+const NOT_MINE = new Set(['EACCES', 'EPERM', 'ENOENT', 'ENOTDIR'])
+const AGENT_FOLDERS = ['.claude', '.codex']
+
 /**
  * The WSL distro the plugin runs for: the one its folder lives in, else, installed on Windows, the
- * first Orca has an environment of with a home Claude uses. Null when there is none, and for Windows
- * without WSL. Throws when Orca or the only distro cannot be read, for Orca to start the worker again.
+ * first Orca has an environment of with a home Claude or Codex uses. Null when there is none, and for
+ * a machine other than Windows. Throws when Orca does not answer, or when none was found and one
+ * could not be read: WSL may still be booting, and null would stand until the worker ends.
  * @param listEnvironments the reply of `orca environment list --json`
  */
-export async function findWslHost(folder, { platform = process.platform, listEnvironments, readNames = readdir, ...options }) {
+export async function findWslHost(folder, { platform = process.platform, listEnvironments, readNames = readdir, readMs = 5_000, ...options }) {
   const served = wslHostOf(folder, options)
   if (served || platform !== 'win32') return served
   const response = await listEnvironments()
   if (!response?.ok) throw new Error(response?.error?.message ?? 'orca environment list failed')
   let unreadable = null
-  for (const { name, orcadDeployment } of response.result?.environments ?? []) {
+  for (const { id, orcadDeployment } of response.result?.environments ?? []) {
     if (orcadDeployment?.kind !== 'wsl') continue
     const { distro } = orcadDeployment
     const homes = win32.join(rootOf(distro), 'home')
     try {
-      for (const user of await readNames(homes)) {
-        const names = await readNames(win32.join(homes, user)).catch(() => [])
-        if (names.includes('.claude')) return hostIn(distro, user, name, options)
+      for (const user of await within(readMs, readNames(homes), homes)) {
+        const home = win32.join(homes, user)
+        const names = await within(readMs, readNames(home), home).catch((error) => {
+          if (NOT_MINE.has(error.code)) return []
+          throw error
+        })
+        if (AGENT_FOLDERS.some((name) => names.includes(name))) return hostIn(distro, user, id, options)
       }
     } catch (error) {
       unreadable = error
@@ -46,6 +55,14 @@ export async function findWslHost(folder, { platform = process.platform, listEnv
   }
   if (unreadable) throw unreadable
   return null
+}
+
+function within(ms, promise, what) {
+  let timer
+  const late = new Promise((_resolve, reject) => {
+    timer = setTimeout(() => reject(new Error(`${what} did not answer in ${ms} ms`)), ms)
+  })
+  return Promise.race([promise, late]).finally(() => clearTimeout(timer))
 }
 
 function rootOf(distro) {

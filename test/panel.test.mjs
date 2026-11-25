@@ -80,6 +80,20 @@ test('patchChildren keeps elements without a key when keyed ones come and go amo
   assert.equal(root.innerHTML, '<header>app</header><section data-key="s">1</section><p class="empty">some</p>')
 })
 
+test('patchChildren moves an element that stays with moveBefore where the browser has it, and inserts a new one', () => {
+  const root = body('<ol><li data-key="a">a</li><li data-key="b">b</li></ol>')
+  const list = root.querySelector('ol')
+  const moved = []
+  list.moveBefore = (node, before) => {
+    assert.equal(node.parentNode, list, 'a new node cannot be moved')
+    moved.push(node.textContent)
+    list.insertBefore(node, before)
+  }
+  patchChildren(root, '<ol><li data-key="new">new</li><li data-key="b">b</li><li data-key="a">a</li></ol>')
+  assert.equal(list.textContent, 'newba')
+  assert.deepEqual(moved, ['b'])
+})
+
 test('patchChildren tells elements of one key apart by their order', () => {
   const root = body('<ol><li data-key="k">1</li><li data-key="k">2</li></ol>')
   const [first, second] = root.querySelectorAll('li')
@@ -90,7 +104,7 @@ test('patchChildren tells elements of one key apart by their order', () => {
 test('cards that take no presses for a moment look as they do afterwards, so an update does not make them blink', async () => {
   const css = await readFile(join(panelDir, 'style.css'), 'utf8')
   const rules = [...css.matchAll(/([^{}]*\.settling[^{}]*)\{([^}]*)\}/g)].map(([, , declarations]) => declarations.trim())
-  assert.deepEqual(rules, ['cursor: default;'])
+  assert.deepEqual(rules, ['cursor: default;', 'transform: none;'])
 })
 
 test('patchChildren ends with exactly the wanted markup, from an empty panel too', () => {
