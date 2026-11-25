@@ -54,6 +54,59 @@ test('patchChildren replaces an element whose data-key differs, and keeps one wh
   assert.equal(root.children[0].textContent, '0 / 5')
 })
 
+test('patchChildren keeps the keyed elements that stay when one comes before them, goes or changes place', () => {
+  const row = (key, text = key) => `<li data-key="${key}">${text}</li>`
+  const root = body(`<ol>${row('a')}${row('b')}${row('c')}</ol>`)
+  const [a, b, c] = root.querySelectorAll('li')
+
+  patchChildren(root, `<ol>${row('new')}${row('a')}${row('b')}${row('c')}</ol>`)
+  assert.deepEqual([...root.querySelectorAll('li')].slice(1), [a, b, c], 'one came first')
+
+  patchChildren(root, `<ol>${row('c', 'moved')}${row('a')}${row('b')}</ol>`)
+  assert.deepEqual([...root.querySelectorAll('li')], [c, a, b], 'one went and one moved up')
+  assert.equal(c.textContent, 'moved')
+
+  patchChildren(root, `<ol>${row('b')}</ol>`)
+  assert.deepEqual([...root.querySelectorAll('li')], [b])
+})
+
+test('patchChildren keeps elements without a key when keyed ones come and go among them', () => {
+  const root = body('<header>app</header><p class="empty">none</p>')
+  const header = root.querySelector('header')
+  const paragraph = root.querySelector('p')
+  patchChildren(root, '<header>app</header><section data-key="s">1</section><p class="empty">some</p>')
+  assert.equal(root.querySelector('header'), header)
+  assert.equal(root.querySelector('p'), paragraph)
+  assert.equal(root.innerHTML, '<header>app</header><section data-key="s">1</section><p class="empty">some</p>')
+})
+
+test('patchChildren moves an element that stays with moveBefore where the browser has it, and inserts a new one', () => {
+  const root = body('<ol><li data-key="a">a</li><li data-key="b">b</li></ol>')
+  const list = root.querySelector('ol')
+  const moved = []
+  list.moveBefore = (node, before) => {
+    assert.equal(node.parentNode, list, 'a new node cannot be moved')
+    moved.push(node.textContent)
+    list.insertBefore(node, before)
+  }
+  patchChildren(root, '<ol><li data-key="new">new</li><li data-key="b">b</li><li data-key="a">a</li></ol>')
+  assert.equal(list.textContent, 'newba')
+  assert.deepEqual(moved, ['b'])
+})
+
+test('patchChildren tells elements of one key apart by their order', () => {
+  const root = body('<ol><li data-key="k">1</li><li data-key="k">2</li></ol>')
+  const [first, second] = root.querySelectorAll('li')
+  patchChildren(root, '<ol><li data-key="new">0</li><li data-key="k">1</li><li data-key="k">2</li></ol>')
+  assert.deepEqual([...root.querySelectorAll('li')].slice(1), [first, second])
+})
+
+test('cards that take no presses for a moment look as they do afterwards, so an update does not make them blink', async () => {
+  const css = await readFile(join(panelDir, 'style.css'), 'utf8')
+  const rules = [...css.matchAll(/([^{}]*\.settling[^{}]*)\{([^}]*)\}/g)].map(([, , declarations]) => declarations.trim())
+  assert.deepEqual(rules, ['cursor: default;', 'transform: none;'])
+})
+
 test('patchChildren ends with exactly the wanted markup, from an empty panel too', () => {
   const root = body()
   const html = '<main><header><h1>app</h1></header></main><div class="others"><h2>x</h2></div>'

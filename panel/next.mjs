@@ -8,6 +8,7 @@
 // - Cards that just came take no presses for a moment (`settling`). Answering one permission often
 //   puts the next in the same place, and a quick second click would answer that one unread. So do
 //   cards that moved to another place, as those of several agents do when one of these goes on.
+//   Only the pointer tells: cards dimmed for that moment would blink at every update.
 // Listeners sit on the root, so they keep working however the cards are patched.
 
 export const SETTLE_MS = 1500

@@ -214,6 +214,14 @@ orca plugin dev load /path/to/orca-milestone   # 承認が必要なときは、�
 orca plugin dev unload /path/to/orca-milestone # 外す
 ```
 
+> この fork を Windows の Orca と WSL で使うときは、WSL の中の開発フォルダーとして読み込まず、インストールします。WSL のフォルダーでは Orca の変更の監視が 60 秒ごとにやり直され、そのたびにパネルが読み込み直されて点滅します。インストールしたものは、Orca の WSL の環境と、そこで `~/.claude` か `~/.codex` を持つホームを自分で探します。
+>
+> ```sh
+> # Windows の Orca の CLI（orca.exe）で打つ。WSL の中の orca は WSL のランタイムに話す
+> orca.exe plugin dev unload '\\wsl.localhost\<distro>\home\<user>\orca-milestone'   # 読み込んでいたら先に外す
+> orca.exe plugin install haoblackj/orca-milestone@wsl-host   # 更新も同じ。承認が必要なときは --approve <fingerprint> を付けて実行し直す
+> ```
+
 テストと manifest の検証は次のとおりです。
 
 ```sh
