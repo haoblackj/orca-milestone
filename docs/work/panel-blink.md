@@ -55,15 +55,17 @@ Windows の Orca には、WSL の開発フォルダーとしての読み込み�
 - 状態: 有効
 
 ## いまの作業
-再レビューを受け、pull request を開く。実機の切り替えはリーダーの承認待ち。
+pull request を開き、再レビューまで済んだ。取り込みと実機の切り替えはリーダーの承認待ち。
 
 ## 済んだこと
 - 原因の実測（上の事実）。
 - `findWslHost`、差分の適用、カードの見た目の修正とテスト（テスト 164 件）。
+- pull request: https://github.com/haoblackj/orca-milestone/pull/3（`wsl-host` 向け）。
+- 再レビュー（ece03e1 から 71a058f）の判定は「マージしてよい」で、前提を崩す指摘、Critical、Important は無い。Minor 3 件（共有が止まったときに読み取りが残ること、待つあいだにイベントが溜まること、ワーカーの最初の開始の失敗を覚える既存の動作）は、起きにくいか今回の範囲の外なので直していない。
 
 ## 残っていること
 - `wsl-host` への取り込みと、Windows の Orca での切り替え（開発フォルダーの `plugin dev unload`、`plugin install haoblackj/orca-milestone@wsl-host`）。
-- 切り替えたあと、描画プロセスが 60 秒ごとに作られないことを測る。
+- 切り替えたあと、描画プロセスが 60 秒ごとに作られないことを測る。WSL が止まった状態からの起動でパネルが埋まることも見る。
 
 ## 次に Claude がすること
 - 承認が出たら、取り込み、切り替え、測り直しの順に行う。切り替えの前に `orca-plugin.json` の `capabilities` が変わっていないことを見る。
