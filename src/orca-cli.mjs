@@ -140,6 +140,13 @@ export async function settleAgents(worktrees, readTurnEnded) {
  * @param readers how to read a pending question or call and a pane's screen, see offersOf,
  *   `readTurnEnded`, see settleAgents, and `readTerminals`, see joinTeams
  */
+// An Orca bot lives in a folder of its own, which Orca lists as a workspace: ~/.orca/bots/<name>.
+const BOT_HOME = /\/\.orca\/bots\/[^/]+\/?$/
+
+export function isBotHome(path) {
+  return typeof path === 'string' && BOT_HOME.test(path)
+}
+
 export async function readWorkspaces(cli, run = runOrca, readers = {}) {
   const response = await run(cli, ['worktree', 'ps', '--limit', '1000', '--json'])
   if (!response?.ok) {
@@ -160,6 +167,7 @@ export async function readWorkspaces(cli, run = runOrca, readers = {}) {
       ? {
           path: active.path,
           displayName: active.displayName,
+          bot: isBotHome(active.path),
           agentStates: mainAgents(active).map((agent) => agent.state),
           background: mainAgents(active).some((agent) => agent.background === true)
         }
@@ -169,6 +177,7 @@ export async function readWorkspaces(cli, run = runOrca, readers = {}) {
         workspace: worktree.displayName,
         repo: typeof worktree.repo === 'string' ? worktree.repo : null,
         path: worktree.path,
+        bot: isBotHome(worktree.path),
         focused: Boolean(worktree.isActive),
         state: agent.state,
         background: agent.background === true,

@@ -126,6 +126,26 @@ code { font-size: 12px; }
 .action.armed { background: color-mix(in oklch, var(--ms-todo) 16%, var(--orca-card));
   border-color: color-mix(in oklch, var(--ms-todo) 60%, transparent); }
 .next .status { margin: 6px 0 0; font-size: 11px; color: var(--ms-todo); }
+/* An agent in an Orca chat: its cards are only shown, and answered in the chat. */
+.action.shown, .action.shown:hover { cursor: default; background: var(--orca-card); transform: none; border-style: dashed; }
+.next .chat-note { margin: 8px 0 0; font-size: 11px; color: var(--orca-muted-foreground); }
+/* A bot's home, marked in place of a repository. */
+.row .bot, header .bot { margin-left: 6px; padding: 0 5px; border-radius: 4px; font-size: 10px; font-weight: 600;
+  color: var(--orca-muted-foreground); background: color-mix(in oklch, var(--orca-foreground) 8%, transparent); }
 @media (prefers-reduced-motion: reduce) {
   .action { transition: none; }
 }
+
+/* The sessions of another Mac, read from its agent-status-panel daemon: rows like the other
+   workspaces, at the bottom edge below them. They can be many, so past 60% of the height they
+   scroll on their own and leave the focused workspace its room. */
+.remote { flex: 0 1 auto; min-height: 0; max-height: 60vh; overflow: auto; padding-top: 12px; margin-top: 12px; border-top: 1px solid var(--orca-border); }
+/* A workspace of that Mac in focus: its tasks and cards above, the rest of its sessions below. */
+body:has(> main.paired) .remote { max-height: 40vh; }
+header .host { margin-left: 6px; padding: 0 5px; border-radius: 4px; font-size: 10px; font-weight: 600;
+  color: var(--orca-muted-foreground); background: color-mix(in oklch, var(--orca-foreground) 8%, transparent); }
+.remote h2 { display: flex; justify-content: space-between; align-items: baseline; margin: 0 0 6px;
+  font-size: 11px; font-weight: 600; color: var(--orca-muted-foreground); }
+.remote h2 .attention { color: var(--ms-todo); }
+.remote .row .head { cursor: default; }
+.next .summary { margin: 0 0 8px; color: var(--orca-muted-foreground); }
