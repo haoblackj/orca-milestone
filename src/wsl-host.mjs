@@ -20,6 +20,8 @@ export function wslHostOf(folder, { statOf = stat, pollMs = 3_000 } = {}) {
     environment: `${distro} (WSL)`,
     // How often the session files are read for a turn starting or ending (see statusPollMs of the worker).
     statusPollMs: 1_000,
+    // The settings name the daemon of another Mac. Reading them needs settings:own, which the manifest does not ask for.
+    readSettings: async () => ({}),
     isRunning: async (pid) => Boolean(await statOf(win32.join(root, 'proc', String(pid))).catch(() => null)),
     // fs.watch throws EISDIR on a WSL share: Windows gets no change notices from it. So the folder
     // is polled: the names and times of what it holds, a task list's time moving when Claude renames

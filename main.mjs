@@ -19,6 +19,7 @@ export default function activate(orca) {
     ...(wsl && {
       watchDir: wsl.watchDir,
       statusPollMs: wsl.statusPollMs,
+      readSettings: wsl.readSettings,
       trace: true,
       prefetchTerminals: true,
       runCli: (cli, args, timeout) => runOrca(cli, [...args, '--environment', wsl.environment], timeout),
