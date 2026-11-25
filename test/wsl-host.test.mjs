@@ -1,5 +1,5 @@
 import assert from 'node:assert/strict'
-import { mkdir, mkdtemp } from 'node:fs/promises'
+import { mkdir, mkdtemp, readFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import test from 'node:test'
@@ -23,6 +23,15 @@ test('a plugin folder WSL serves to Windows gives the home, the environment and 
   assert.equal(await wsl.isRunning(42), true)
   assert.equal(await wsl.isRunning(43), false)
   assert.equal(wslHostOf('/Users/alice/orca-milestone'), null)
+})
+
+// Orca stops a plugin whose new version asks for more until a person allows it.
+test('the plugin asks for no access to settings, and a WSL host reads none', async () => {
+  const manifest = JSON.parse(await readFile(new URL('../orca-plugin.json', import.meta.url), 'utf8'))
+  assert.deepEqual(manifest.capabilities.map(({ kind }) => kind), ['workspace:read', 'agent:read', 'workspace:write'])
+  assert.equal(manifest.contributes.settings, undefined)
+  const wsl = wslHostOf(String.raw`\\wsl.localhost\Ubuntu\home\alice\repo\orca-milestone`)
+  assert.deepEqual(await wsl.readSettings(), {})
 })
 
 test('a WSL host polls a folder instead of watching it, and tells a change only when a list in it changed', async () => {

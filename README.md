@@ -78,7 +78,6 @@ Node のワーカーを動かすので、フルアクセスの plugin として�
 | 権限 `agent:read` | Agent ステータスの通知 | 表示の更新 |
 | 権限 `workspace:write` | ワークスペースを開く、組み込みコマンドを実行する | 行を押したときの移動（これにしか使いません） |
 | フック `agent.launch.before` | エージェントの起動直前の処理 | [起動時の設定](#必要なもの) |
-| 権限 `settings:own` | この plugin の設定の読み取り | [別の Mac の接続先](#別の-mac-のセッションを出す) |
 
 カードを押したときは、Orca に同梱の CLI（`orca terminal send`）で、そのエージェントのターミナルに依頼文やキーを送ります。権限の対象ではなく、ワーカーが CLI を実行して行います。
 
@@ -101,6 +100,9 @@ Node のワーカーを動かすので、フルアクセスの plugin として�
 
 1. エージェントを動かす Mac で [agent-status-panel](https://github.com/andoshin11/agent-status-panel) の daemon を動かし、`tailscale serve` で tailnet に公開します（iPhone アプリと同じ準備です。Funnel は使いません）。ボタンを押すには、daemon の `allowedLogin` に自分の Tailscale のログインを設定します。
 2. 普段使う Mac の Orca で、**Settings → Plugins → Milestone** を開き、次を入れます。
+
+   > この fork は権限 `settings:own` と、この設定を外しています（Windows の Orca と WSL で使い、別の Mac が無いため）。この節の機能は使えません。
+
    - **Remote agent-status-panel**: daemon の tailnet のホスト名（`mac-mini.example.ts.net` など）か、`https://` の URL
    - **Remote name**: パネルの見出し（既定は `Mac mini`）
 
