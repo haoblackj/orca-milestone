@@ -63,6 +63,7 @@ pull request のレビューと、`wsl-host` への取り込みの承認を待�
 ## 済んだこと
 - ローカルの `main` を上流の v0.13.1（8785476）まで進めた。
 - 上流の v0.13.1 を merge した（8df41b7）。
+- pull request: https://github.com/haoblackj/orca-milestone/pull/1（`wsl-host` 向け）。
 - 修正（1dc2c3a）。
 - レビューの Minor 4 件の直し（07383a9、テスト 146 件）。直した後も、2 つのタブの両方が `next` を書き終えているワークスペースのカードは、2 つのエージェントの分になった。
 
