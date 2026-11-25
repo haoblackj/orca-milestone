@@ -552,6 +552,7 @@ test('the watch of the session files goes on when the log throws, and a session 
       },
       home,
       cli: 'orca',
+      readSettings: async () => ({}),
       trace: true,
       statusPollMs: 10,
       readOrca: async () => {

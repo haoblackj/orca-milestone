@@ -115,6 +115,8 @@ async function turnEnded(agent, path, readTurnEnded) {
  * done, and `background`: shells it started go on running, and it waits for the user. Its proposals
  * then show as for any agent that finished. Its `stateStartedAt` becomes the end of the turn: Orca's
  * stays where the shells began, and the cards of every later turn would get the ids of the first.
+ * An agent Orca calls done keeps that time too: Orca was seen to count done from about 60 s after the
+ * end of the turn, with no turn between, and the cards of one turn would change ids and places.
  * @param readTurnEnded resolves a workspace path to when its Claude session ended its turn (true when
  *   the time is unknown), or null
  */
@@ -122,12 +124,18 @@ export async function settleAgents(worktrees, readTurnEnded) {
   const settled = []
   for (const worktree of worktrees) {
     const working = mainAgents(worktree).filter((agent) => agent.agentType === 'claude' && agent.state === 'working' && agent.hasLivePty === true)
-    const ended = working.length === 1 ? await turnEnded(working[0], worktree.path, readTurnEnded) : null
-    if (!ended) {
-      settled.push(worktree)
-      continue
+    const ended = new Map()
+    for (const agent of working) {
+      // The transcript is found by the workspace, so it says nothing of one among several agents.
+      const at = working.length === 1 ? await turnEnded(agent, worktree.path, readTurnEnded) : mainAgentDone(agent)
+      if (at) ended.set(agent, at)
     }
-    settled.push({ ...worktree, agents: worktree.agents.map((agent) => (agent === working[0] ? { ...agent, state: 'done', background: true, ...(typeof ended === 'number' ? { stateStartedAt: ended } : {}) } : agent)) })
+    const settle = (agent) => {
+      if (ended.has(agent)) return { ...agent, state: 'done', background: true, ...(typeof ended.get(agent) === 'number' ? { stateStartedAt: ended.get(agent) } : {}) }
+      const at = agent.agentType === 'claude' && agent.state === 'done' ? mainAgentDone(agent) : null
+      return at === null ? agent : { ...agent, stateStartedAt: at }
+    }
+    settled.push({ ...worktree, ...(worktree.agents ? { agents: worktree.agents.map(settle) } : {}) })
   }
   return settled
 }
@@ -140,6 +148,13 @@ export async function settleAgents(worktrees, readTurnEnded) {
  * @param readers how to read a pending question or call and a pane's screen, see offersOf,
  *   `readTurnEnded`, see settleAgents, and `readTerminals`, see joinTeams
  */
+// An Orca bot lives in a folder of its own, which Orca lists as a workspace: ~/.orca/bots/<name>.
+const BOT_HOME = /\/\.orca\/bots\/[^/]+\/?$/
+
+export function isBotHome(path) {
+  return typeof path === 'string' && BOT_HOME.test(path)
+}
+
 export async function readWorkspaces(cli, run = runOrca, readers = {}) {
   const response = await run(cli, ['worktree', 'ps', '--limit', '1000', '--json'])
   if (!response?.ok) {
@@ -160,6 +175,7 @@ export async function readWorkspaces(cli, run = runOrca, readers = {}) {
       ? {
           path: active.path,
           displayName: active.displayName,
+          bot: isBotHome(active.path),
           agentStates: mainAgents(active).map((agent) => agent.state),
           background: mainAgents(active).some((agent) => agent.background === true)
         }
@@ -169,6 +185,7 @@ export async function readWorkspaces(cli, run = runOrca, readers = {}) {
         workspace: worktree.displayName,
         repo: typeof worktree.repo === 'string' ? worktree.repo : null,
         path: worktree.path,
+        bot: isBotHome(worktree.path),
         focused: Boolean(worktree.isActive),
         state: agent.state,
         background: agent.background === true,

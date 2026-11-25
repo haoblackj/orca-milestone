@@ -1,4 +1,6 @@
 // Turns the focused workspace and the agent sessions found on disk into what the panel shows.
+import { basename } from 'node:path'
+import { pairedPathOf, splitByPlace } from './remote.mjs'
 
 const MAX_SESSIONS = 3
 const MAX_ROWS = 8
@@ -41,6 +43,7 @@ function buildOthers(agents, sessions) {
       workspace: entry.workspace,
       path: entry.path,
       repo: entry.repo ?? null,
+      bot: entry.bot === true,
       focused: entry.focused,
       kind: entry.needsUser ? 'attention' : 'idle',
       working: entry.working && !entry.needsUser,
@@ -90,6 +93,7 @@ export function buildModel(workspace, sessions, agents = [], offers = []) {
   return {
     kind: mine.length > 0 ? 'sessions' : 'no-tasks',
     workspace: workspace.displayName,
+    bot: workspace.bot === true,
     agent: states.includes('working')
       ? 'working'
       : states.includes('blocked') || states.includes('waiting')
@@ -98,7 +102,34 @@ export function buildModel(workspace, sessions, agents = [], offers = []) {
           ? workspace.background ? 'background' : 'idle'
           : 'none',
     sessions: mine,
-    next: offers.find((offer) => offer.path === workspace.path) ?? null,
+    next: offers.filter((offer) => offer.path === workspace.path),
     others
+  }
+}
+
+/**
+ * Shows a workspace of a paired Orca server as the focused one, from the sessions the daemon there
+ * reads: its tasks and its cards at the top, and the rest of that Mac's sessions below as before.
+ * Orca lists no such workspace here, so this applies only when no workspace here is focused.
+ * @param context  the focused workspace as Orca's `workspace.changed` gives it, or null
+ * @param remote   `{ label, sessions }` read from the daemon, or `{ label, error }`, or null
+ */
+export function withPairedFocus(model, context, remote) {
+  const path = pairedPathOf(context)
+  if (model.kind !== 'no-workspace' || !path || !remote?.sessions) return { ...model, remote }
+  const { mine, others } = splitByPlace(remote.sessions, path)
+  const lists = mine
+    .filter((session) => session.total > 0)
+    .slice(0, MAX_SESSIONS)
+    .map((session) => ({ listId: session.id, goal: session.goal, ...progress(session.tasks) }))
+  return {
+    kind: lists.length > 0 ? 'sessions' : 'no-tasks',
+    workspace: context.displayName || basename(path),
+    host: remote.label,
+    agent: mine.some((session) => session.attention) ? 'waiting' : 'none',
+    sessions: lists,
+    next: mine.filter((session) => session.offer).map((session) => session.offer).slice(0, 1),
+    others: model.others,
+    remote: { ...remote, sessions: others }
   }
 }

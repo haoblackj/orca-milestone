@@ -191,3 +191,173 @@ test('a card that just came in the place of the answered one takes no presses fo
   await flush()
   assert.deepEqual(requests[1], { offer: 'second', index: 1 })
 })
+
+test('cards that moved to another place among those of several agents take no presses for a moment', async () => {
+  const { sendOnPress } = await import('../panel/next.mjs')
+  const cards = (...offers) => `<main>${offers.map((offer) => `<div class="next" data-key="next\n${offer}"><ol class="actions"><li><button data-next="${offer}" data-index="0">続ける</button></li></ol></div>`).join('')}</main>`
+  const root = body('')
+  let time = 0
+  const requests = []
+  const presses = sendOnPress(root, async (request) => {
+    requests.push(request)
+    return { sent: true }
+  }, { now: () => time, settleMs: 1500, later: () => {} })
+  const show = (...offers) => {
+    patchChildren(root, cards(...offers))
+    presses.restore()
+  }
+  const settling = () => [...root.querySelectorAll('.next')].map((next) => next.classList.contains('settling'))
+
+  show('a', 'b', 'c')
+  time = 2000
+  show('a', 'b', 'c')
+  assert.deepEqual(settling(), [false, false, false])
+
+  // The agent of `b` went on: `c` is now where `b` was.
+  show('a', 'c')
+  assert.deepEqual(settling(), [false, true])
+  root.querySelectorAll('[data-next]')[1].click()
+  await new Promise((resolve) => setTimeout(resolve, 0))
+  assert.deepEqual(requests, [], 'a click meant for the card before it')
+
+  time = 3500
+  root.querySelectorAll('[data-next]')[1].click()
+  await new Promise((resolve) => setTimeout(resolve, 0))
+  assert.deepEqual(requests, [{ offer: 'c', index: 0 }])
+})
+
+test('while a card is sent, the cards of another agent can be pressed', async () => {
+  const { sendOnPress } = await import('../panel/next.mjs')
+  const root = body('<main><div class="next"><button data-next="a" data-index="0">A</button></div><div class="next"><button data-next="b" data-index="0">B</button></div></main>')
+  const requests = []
+  sendOnPress(root, (request) => {
+    requests.push(request)
+    return new Promise(() => {})
+  })
+  const [a, b] = root.querySelectorAll('[data-next]')
+  a.click()
+  a.click()
+  b.click()
+  assert.deepEqual(requests, [{ offer: 'a', index: 0 }, { offer: 'b', index: 0 }])
+})
+
+test('what became of a press stays shown when another agent’s cards come above it', async () => {
+  const { sendOnPress } = await import('../panel/next.mjs')
+  const cards = (...offers) => `<main>${offers.map((offer) => `<div class="next" data-key="next\n${offer}"><ol class="actions">${[0, 1].map((index) => `<li><button class="action" data-next="${offer}" data-index="${index}">続ける</button></li>`).join('')}</ol></div>`).join('')}</main>`
+  const root = body('')
+  let time = 0
+  let answer
+  const requests = []
+  const presses = sendOnPress(root, (request) => {
+    requests.push(request)
+    return new Promise((resolve) => (answer = resolve))
+  }, { now: () => time, settleMs: 1500, later: () => {} })
+  const show = (...offers) => {
+    patchChildren(root, cards(...offers))
+    presses.restore()
+    time += 2000
+  }
+  const at = (offer) => root.querySelectorAll(`[data-next="${offer}"]`)
+  const next = (offer) => at(offer)[0].closest('.next')
+  const flush = () => new Promise((resolve) => setTimeout(resolve, 0))
+
+  show('a')
+  at('a')[1].click()
+  show('b', 'a')
+  assert.ok(next('a').classList.contains('busy'))
+  assert.deepEqual([...at('a')].map((card) => card.classList.contains('sending')), [false, true])
+  assert.ok(!next('b').classList.contains('busy'))
+
+  answer({ sent: false, reason: 'failed' })
+  await flush()
+  assert.match(next('a').querySelector('.status').textContent, /失敗/)
+  assert.ok(!next('a').classList.contains('busy'))
+  show('c', 'b', 'a')
+  assert.match(next('a').querySelector('.status').textContent, /失敗/)
+  assert.equal(root.querySelectorAll('.status').length, 1)
+
+  at('a')[0].click()
+  assert.equal(root.querySelectorAll('.status').length, 0, 'pressed again, the old reason is gone')
+  answer({ sent: true })
+  await flush()
+  show('b', 'a')
+  assert.ok(next('a').classList.contains('busy'), 'sent: until the agent moves on and its cards go')
+  at('a')[1].click()
+  assert.equal(requests.length, 2)
+})
+
+/** A panel whose sends are answered by hand, and whose offers come and go. */
+async function pressPanel() {
+  const { sendOnPress } = await import('../panel/next.mjs')
+  const root = body('')
+  const panel = { root, requests: [], answer: null, time: 0 }
+  const presses = sendOnPress(root, (request) => {
+    panel.requests.push(request)
+    return new Promise((resolve) => (panel.answer = resolve))
+  }, { now: () => panel.time, settleMs: 1500, later: () => {} })
+  panel.show = (html) => {
+    patchChildren(root, `<main>${html}</main>`)
+    presses.restore()
+    panel.time += 2000
+  }
+  panel.reply = async (result) => {
+    panel.answer(result)
+    await new Promise((resolve) => setTimeout(resolve, 0))
+  }
+  return panel
+}
+
+test('a dangerous command takes two presses again after a refusal, a redraw keeps the first, and its going away forgets it', async () => {
+  const panel = await pressPanel()
+  const { root, requests } = panel
+  const html = '<div class="next" data-key="p"><button class="action" data-next="p" data-index="0" data-dangerous="1">許可</button><button class="action" data-next="p" data-index="1">拒否</button></div>'
+  const armed = () => [...root.querySelectorAll('[data-next]')].map((card) => card.classList.contains('armed'))
+  const allow = () => root.querySelector('[data-dangerous]').click()
+
+  panel.show(html)
+  allow()
+  assert.deepEqual([requests.length, armed()], [0, [true, false]])
+  panel.show(html)
+  assert.deepEqual(armed(), [true, false])
+  panel.show('')
+  panel.show(html)
+  assert.deepEqual([armed(), root.querySelector('.status')], [[false, false], null])
+
+  allow()
+  allow()
+  assert.deepEqual(requests, [{ offer: 'p', index: 0, confirmed: true }])
+  await panel.reply({ sent: false, reason: 'failed' })
+  assert.deepEqual(armed(), [false, false])
+  allow()
+  assert.deepEqual([requests.length, armed()], [1, [true, false]], 'asks for the second press again')
+  allow()
+  assert.equal(requests.length, 2)
+  await panel.reply({ sent: false, reason: 'confirm' })
+  assert.deepEqual(armed(), [true, false])
+  allow()
+  assert.equal(requests.length, 3, 'the one who answers asked for this press')
+})
+
+test('cards that go away while one is sent come back still taken, and a form on its way has no button to press', async () => {
+  const panel = await pressPanel()
+  const { root, requests } = panel
+  const card = '<div class="next" data-key="a"><button class="action" data-next="a" data-index="0">A</button></div>'
+  panel.show(card)
+  root.querySelector('[data-next]').click()
+  panel.show('')
+  panel.show(card)
+  root.querySelector('[data-next]').click()
+  assert.equal(requests.length, 1)
+  await panel.reply({ sent: true })
+
+  panel.show('<div class="next" data-key="f"><button class="action option" data-form="f" data-question="0" data-option="1" data-multi="0">B</button><button class="submit" data-submit="f" data-count="1" disabled>回答を送信</button></div>')
+  const submit = root.querySelector('[data-submit]')
+  root.querySelector('[data-option]').click()
+  assert.equal(submit.disabled, false)
+  submit.click()
+  assert.equal(submit.disabled, true)
+  await panel.reply({ sent: false, reason: 'failed' })
+  assert.equal(submit.disabled, false, 'the answers are kept')
+  submit.click()
+  assert.deepEqual(requests.slice(1), [{ offer: 'f', answers: [[1]] }, { offer: 'f', answers: [[1]] }])
+})

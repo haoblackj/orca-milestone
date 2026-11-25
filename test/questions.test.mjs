@@ -291,6 +291,50 @@ test('a turn stays over after compacting while idle, and Orca saying the agent i
   assert.deepEqual(still.agents.map((agent) => agent.state), ['working'], 'the agent itself still working stays working')
 })
 
+test('with several agents called working, each whose own turn is over as Orca says it is done, and the transcript is not asked', async () => {
+  const { readWorkspaces } = await import('../src/orca-cli.mjs')
+  const reply = 'できました\n```next\n[{"label":"A","prompt":"do a"}]\n```'
+  const busy = { agentType: 'claude', state: 'working', hasLivePty: true, stateStartedAt: 7, lastAssistantMessage: reply }
+  const agents = [
+    { ...busy, paneKey: 'tab:a', mainAgent: { state: 'done', stateStartedAt: 3_000 } },
+    { ...busy, paneKey: 'tab:b', mainAgent: { state: 'done', stateStartedAt: 4_000 } },
+    { ...busy, paneKey: 'tab:c', mainAgent: { state: 'working', stateStartedAt: 5_000 } },
+    // Which of several agents a transcript of the workspace is of cannot be told.
+    { ...busy, paneKey: 'tab:d' }
+  ]
+  const run = async () => ({ ok: true, result: { worktrees: [{ path: '/a', displayName: 'a', isActive: true, agents }] } })
+  const read = await readWorkspaces('orca', run, { readTurnEnded: async () => assert.fail('asked') })
+  assert.deepEqual(read.agents.map((agent) => [agent.state, agent.background, agent.since]), [['done', true, 3_000], ['done', true, 4_000], ['working', false, 7], ['working', false, 7]])
+  assert.deepEqual(read.offers.map((offer) => offer.paneKey), ['tab:b', 'tab:a'])
+})
+
+// Orca was seen to call an agent done from about 60 s after the end of its turn (`mainAgent`), with no turn between.
+test('a later start of done in the same turn changes neither the offer of an agent nor its place among several', async () => {
+  const { readWorkspaces } = await import('../src/orca-cli.mjs')
+  const reply = 'できました\n```next\n[{"label":"A","prompt":"do a"}]\n```'
+  const of = (extra) => ({ agentType: 'claude', hasLivePty: true, lastAssistantMessage: reply, ...extra })
+  const offersWith = async (first) => {
+    const agents = [first, of({ paneKey: 'tab:b', state: 'done', stateStartedAt: 4_000, mainAgent: { state: 'done', stateStartedAt: 4_000 } })]
+    const run = async () => ({ ok: true, result: { worktrees: [{ path: '/a', displayName: 'a', isActive: true, agents }] } })
+    const { offers, agents: read } = await readWorkspaces('orca', run)
+    return { ids: offers.map((offer) => [offer.paneKey, offer.id]), background: read[0].background }
+  }
+  const mainAgent = { state: 'done', stateStartedAt: 3_000 }
+  const during = await offersWith(of({ paneKey: 'tab:a', state: 'working', stateStartedAt: 1_000, mainAgent }))
+  const after = await offersWith(of({ paneKey: 'tab:a', state: 'done', stateStartedAt: 63_000, mainAgent }))
+  assert.deepEqual(during.ids.map(([pane]) => pane), ['tab:b', 'tab:a'])
+  assert.deepEqual(after.ids, during.ids)
+  assert.deepEqual([during.background, after.background], [true, false])
+})
+
+test('only a Claude agent that is done takes the time of its turn’s end from mainAgent', async () => {
+  const { readWorkspaces } = await import('../src/orca-cli.mjs')
+  const of = (agentType, state) => ({ agentType, state, hasLivePty: true, paneKey: `tab:${agentType}-${state}`, stateStartedAt: 63_000, mainAgent: { state: 'done', stateStartedAt: 3_000 } })
+  const agents = [of('claude', 'done'), of('claude', 'waiting'), of('codex', 'done')]
+  const read = await readWorkspaces('orca', async () => ({ ok: true, result: { worktrees: [{ path: '/a', displayName: 'a', agents }] } }))
+  assert.deepEqual(read.agents.map((agent) => agent.since), [3_000, 63_000, 63_000])
+})
+
 // The transcript of a working agent is opened over the share on every refresh, at 0.13-0.25 s and up to
 // 2.6 s under load, to learn what Orca's mainAgent already says: that the agent itself is working.
 test('the transcript is read only when Orca does not say whether the agent itself is working', async () => {

@@ -17,17 +17,19 @@ import {
   readTaskList,
   readTranscriptHead,
   createPendingReader,
+  createChatReplyReader,
   pendingCall,
   turnEnded,
   pendingQuestion
 } from './claude-sessions.mjs'
 import { readCodexProgress } from './codex-progress.mjs'
-import { buildModel } from './model.mjs'
+import { buildModel, withPairedFocus } from './model.mjs'
 import { createNextSender, readPaneScreen, readTerminalScreen } from './next-actions.mjs'
 import { createLaunchInfoReader, createLaunchReader, createRestarter } from './restart.mjs'
 import { createGrantAccess } from './turn-grant.mjs'
 import { readWorkspaces, runOrca } from './orca-cli.mjs'
 import { progressDir } from './progress-server.mjs'
+import { createRemoteClient, statusUrl } from './remote.mjs'
 import { renderBody } from './render.mjs'
 
 const TASK_LIST_MAX_AGE_MS = 7 * 24 * 60 * 60 * 1000
@@ -36,6 +38,9 @@ const TASK_LIST_MAX_AGE_MS = 7 * 24 * 60 * 60 * 1000
 const SYNC_MS = 30_000
 const DEBOUNCE_MS = 150
 const REQUEST_RETRY_MS = 30_000
+// How often the sessions of another Mac are read, as often as the iPhone app reads them.
+const REMOTE_MS = 10_000
+const REMOTE_LABEL = 'リモート'
 
 /** The terminal to show a workspace by: an agent's before a shell's, then the one that printed last. */
 function terminalAt(terminals, path) {
@@ -62,7 +67,10 @@ export function createMilestoneWorker({
   // opens only through a terminal, and each CLI call takes 0.45-0.7 s.
   prefetchTerminals = false,
   // Writes the timing lines of trace() to the plugin log. They add a line per event and per refresh.
-  trace: tracing = false
+  trace: tracing = false,
+  remote = createRemoteClient(),
+  readSettings = async () => (await orca.host.call('settings.get')).settings ?? {},
+  remoteMs = REMOTE_MS
 }) {
   const paths = claudePaths(home)
   const { tasksRoot } = paths
@@ -77,6 +85,9 @@ export function createMilestoneWorker({
   // Lists already replayed from a transcript, by list and the time it last changed.
   const replayed = new Map()
   let workspace = null
+  // The focused workspace as Orca's `workspace.changed` gives it. A paired server's workspace is
+  // only known this way.
+  let context = null
   let agents = []
   let offers = []
   // The terminals of the latest listing, and the listing on its way, see prefetchTerminals.
@@ -99,7 +110,9 @@ export function createMilestoneWorker({
     readLaunch: createLaunchReader(home, { readLaunchInfo }),
     readLaunchInfo,
     readAllowed: (sessionId) => grants.allowed(sessionId),
-    readFocusedId
+    readFocusedId,
+    // Orca keeps only the start of what an agent in its chat said, without the next block.
+    readReply: createChatReplyReader(home)
   }
   let lastHtml = null
   let started = null
@@ -109,6 +122,13 @@ export function createMilestoneWorker({
   let rerun = false
   // The last state heard per pane. Agents repeat a state with every hook they fire.
   const paneStates = new Map()
+  // The sessions of another Mac, `{ label, sessions }` or `{ label, error }`, and where they were
+  // read; null while the settings name no daemon.
+  let remoteView = null
+  let remoteUrl = null
+  let remoteRead = null
+  let remoteTimer = null
+  let settingsFailed = false
 
   async function headOf(listId) {
     if (heads.has(listId)) return heads.get(listId)
@@ -295,8 +315,44 @@ export function createMilestoneWorker({
     const sessionsStarted = now()
     const sessions = await allSessions()
     const sessionsMs = now() - sessionsStarted
-    const changed = publish(renderBody(buildModel(workspace, sessions, agents, offers)))
+    const changed = publish(renderBody(withPairedFocus(buildModel(workspace, sessions, agents, offers), context, remoteView)))
     trace(`refresh asked=${Boolean(askOrca)} orca=${orcaMs}ms sessions=${sessionsMs}ms offers=${offers.length} published=${changed}`)
+  }
+
+  /** Reads the daemon the settings name, one read at a time, and redraws with what it has. */
+  function readRemote() {
+    remoteRead ??= (async () => {
+      try {
+        let settings = {}
+        try {
+          settings = await readSettings()
+          settingsFailed = false
+        } catch (error) {
+          if (!settingsFailed) orca.log(`milestone: could not read the settings: ${error.message}`)
+          settingsFailed = true
+        }
+        const url = statusUrl(settings.remoteUrl)
+        const label = typeof settings.remoteLabel === 'string' && settings.remoteLabel.trim() ? settings.remoteLabel.trim() : REMOTE_LABEL
+        const previous = remoteView
+        remoteUrl = url
+        // Its own quicker timer only while a daemon is named.
+        if (url && !remoteTimer) remoteTimer = setInterval(() => void readRemote(), remoteMs)
+        if (!url && remoteTimer) {
+          clearInterval(remoteTimer)
+          remoteTimer = null
+        }
+        remoteView = url ? { label, ...(await remote.read(url)) } : null
+        if (JSON.stringify(previous) !== JSON.stringify(remoteView)) schedule(false, 'remote-changed')
+      } finally {
+        remoteRead = null
+      }
+    })()
+    return remoteRead
+  }
+
+  /** Whether a pressed card is one of the other Mac's, which only its daemon can send. */
+  function isRemoteOffer(offerId) {
+    return Boolean(remoteUrl && remoteView?.sessions?.some((session) => session.offer?.id === offerId))
   }
 
   /** Runs refreshes one at a time; a request during a run starts one more afterwards. */
@@ -334,6 +390,11 @@ export function createMilestoneWorker({
 
   /** Sends the prompt of a pressed button to its agent; the panel shows what went wrong. */
   async function sendNext(request) {
+    if (isRemoteOffer(request?.offer)) {
+      const result = await remote.press(remoteUrl, request)
+      if (result.sent) void readRemote()
+      return result
+    }
     try {
       const result = await sendOffer(request)
       if (result.sent) schedule(true, 'next-sent')
@@ -349,6 +410,12 @@ export function createMilestoneWorker({
     pendingFocus ||= focusChanged
     clearTimeout(timer)
     timer = setTimeout(() => void refresh(), DEBOUNCE_MS)
+  }
+
+  /** Orca focused another workspace, here or on a paired server. */
+  function focusChanged(focused) {
+    context = focused ?? null
+    schedule(true, 'workspace.changed')
   }
 
   function agentChanged({ paneKey, state, mainAgent }) {
@@ -391,11 +458,17 @@ export function createMilestoneWorker({
         if (name && !String(name).endsWith('.lock')) schedule(false, 'tasks-changed')
       })
       watchDir(progressRoot, () => schedule(false, 'progress-changed'))
-      setInterval(() => schedule(true, 'sync-interval'), SYNC_MS)
+      // The slow sync also notices a daemon named or cleared in the settings.
+      setInterval(() => {
+        schedule(true, 'sync-interval')
+        void readRemote()
+      }, SYNC_MS)
+      // Not awaited: a daemon out of reach must not hold up the first view.
+      void readRemote()
       await refresh(true)
     })()
     return started
   }
 
-  return { start, refresh, schedule, agentChanged, view, openWorkspace, sendNext }
+  return { start, refresh, schedule, focusChanged, agentChanged, view, openWorkspace, sendNext, readRemote }
 }

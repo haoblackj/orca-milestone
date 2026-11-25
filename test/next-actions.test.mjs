@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict'
 import { test } from 'node:test'
-import { createNextSender, nextOffer, parseSuggestions } from '../src/next-actions.mjs'
+import { createNextSender, nextOffer, offersOf, parseSuggestions } from '../src/next-actions.mjs'
 import { buildModel } from '../src/model.mjs'
 import { renderBody } from '../src/render.mjs'
 
@@ -83,24 +83,56 @@ test('nextOffer comes from the one live main agent that finished its turn', () =
 })
 
 // A card is sent to the pane of the agent that proposed it, so several agents in one workspace do not
-// mix their cards up; the card names its agent, for the user to tell them apart.
-test('in a workspace of several agents, the cards come from the one that finished its turn last, named', () => {
+// mix their cards up; the cards name their agent, for the user to tell them apart.
+test('in a workspace of several agents, each one that finished its turn offers its cards, named, the last to finish first', async () => {
   const notes = agent({ paneKey: 'tab:notes', conversationName: 'リリースノートを書く', stateStartedAt: 9 })
-  const busy = agent({ paneKey: 'tab:busy', conversationName: '整理', state: 'working', lastAssistantMessage: '' })
-  const offer = nextOffer(worktree([busy, notes]))
-  assert.equal(offer.paneKey, 'tab:notes')
-  assert.equal(offer.from, 'リリースノートを書く')
-
   const older = agent({ paneKey: 'tab:older', conversationName: '前の作業', stateStartedAt: 3 })
-  assert.equal(nextOffer(worktree([older, notes])).paneKey, 'tab:notes', 'the turn that ended last')
-  assert.equal(nextOffer(worktree([agent({ paneKey: 'tab:notes', stateStartedAt: 9, lastAssistantMessage: 'no block' }), older])).paneKey, 'tab:older', 'one without cards gives way')
-  assert.equal(nextOffer(worktree([busy, agent({ paneKey: 'tab:quiet', lastAssistantMessage: 'no block' })])), null)
-  assert.equal(nextOffer(worktree([agent()])).from, undefined, 'one agent needs no name')
-  const long = nextOffer(worktree([busy, agent({ paneKey: 'tab:long', conversationName: 'あ'.repeat(100) })])).from
-  assert.equal([...long].length, 60, 'a long name is shortened')
+  const busy = agent({ paneKey: 'tab:busy', conversationName: '整理', state: 'working', lastAssistantMessage: '' })
+  const quiet = agent({ paneKey: 'tab:quiet', stateStartedAt: 12, lastAssistantMessage: 'no block' })
+  const offers = await offersOf([worktree([busy, older, quiet, notes])])
+  assert.deepEqual(offers.map((offer) => [offer.paneKey, offer.from]), [['tab:notes', 'リリースノートを書く'], ['tab:older', '前の作業']])
+  assert.notEqual(offers[0].id, offers[1].id)
 
-  const shown = renderBody(buildModel({ path: '/work/app', displayName: 'app', agentStates: ['working', 'done'] }, [], [], [offer]))
-  assert.match(shown, /リリースノートを書く/)
+  assert.deepEqual(await offersOf([worktree([busy, quiet])]), [])
+  assert.equal((await offersOf([worktree([agent()])]))[0].from, undefined, 'one agent needs no name')
+  const [{ from }] = await offersOf([worktree([busy, agent({ paneKey: 'tab:long', conversationName: 'あ'.repeat(100) })])])
+  assert.equal([...from].length, 60, 'a long name is shortened')
+})
+
+test('among several agents, the cards of one without a name of its own name its kind', async () => {
+  const blank = agent({ paneKey: 'tab:a', conversationName: ' ', displayName: '整理', stateStartedAt: 9 })
+  const none = agent({ paneKey: 'tab:b', conversationName: null, displayName: '', taskTitle: null, stateStartedAt: 5 })
+  const codex = agent({ paneKey: 'tab:c', agentType: 'codex', stateStartedAt: 3 })
+  assert.deepEqual((await offersOf([worktree([blank, none, codex])])).map((offer) => offer.from), ['整理', 'Claude', 'Codex'])
+})
+
+test('the focused workspace shows the cards of every agent that offers some, under one heading', async () => {
+  const offers = await offersOf([
+    worktree([agent({ paneKey: 'tab:a', conversationName: '前の作業', stateStartedAt: 3 }), agent({ paneKey: 'tab:b', conversationName: 'リリースノートを書く', stateStartedAt: 9 })]),
+    worktree([agent({ paneKey: 'tab:c' })], { path: '/work/other' })
+  ])
+  const html = renderBody(buildModel({ path: '/work/app', displayName: 'app', agentStates: ['done', 'done'] }, [], [], offers))
+  assert.equal(html.split('class="next proposal"').length - 1, 2)
+  assert.equal(html.split('次の作業').length - 1, 1)
+  assert.ok(html.indexOf('リリースノートを書く から') < html.indexOf('前の作業 から'))
+  for (const { id, path } of offers) assert.equal(html.includes(`data-next="${id}"`), path === '/work/app')
+})
+
+test('a card of an agent that did not finish last is sent to that agent', async () => {
+  const offers = await offersOf([worktree([agent({ paneKey: 'tab:a', stateStartedAt: 3 }), agent({ paneKey: 'tab:b', stateStartedAt: 9 })])])
+  const sentTo = []
+  const send = createNextSender({
+    readOffers: async () => offers,
+    wait: async () => {},
+    run: async (args) => {
+      if (args[1] === 'list') return { result: { terminals: ['a', 'b'].map((leaf) => ({ handle: `term-${leaf}`, tabId: 'tab', leafId: leaf, writable: true })) } }
+      if (args[1] === 'send') sentTo.push(args[args.indexOf('--terminal') + 1])
+      return { result: { send: { accepted: true } } }
+    }
+  })
+  assert.deepEqual(await send({ offer: offers.find((offer) => offer.paneKey === 'tab:a').id, index: 0 }), { sent: true })
+  assert.ok(sentTo.length > 0 && sentTo.every((handle) => handle === 'term-a'), sentTo.join())
+  assert.deepEqual(await send({ offer: offers.find((offer) => offer.paneKey === 'tab:b').id, index: 0 }), { sent: true }, 'the other one stays usable')
 })
 
 function setupSender({ agentType = 'claude', screen = '? for shortcuts', accepted = true, terminals } = {}) {
