@@ -225,3 +225,63 @@ test('cards that moved to another place among those of several agents take no pr
   await new Promise((resolve) => setTimeout(resolve, 0))
   assert.deepEqual(requests, [{ offer: 'c', index: 0 }])
 })
+
+test('while a card is sent, the cards of another agent can be pressed', async () => {
+  const { sendOnPress } = await import('../panel/next.mjs')
+  const root = body('<main><div class="next"><button data-next="a" data-index="0">A</button></div><div class="next"><button data-next="b" data-index="0">B</button></div></main>')
+  const requests = []
+  sendOnPress(root, (request) => {
+    requests.push(request)
+    return new Promise(() => {})
+  })
+  const [a, b] = root.querySelectorAll('[data-next]')
+  a.click()
+  a.click()
+  b.click()
+  assert.deepEqual(requests, [{ offer: 'a', index: 0 }, { offer: 'b', index: 0 }])
+})
+
+test('what became of a press stays shown when another agent’s cards come above it', async () => {
+  const { sendOnPress } = await import('../panel/next.mjs')
+  const cards = (...offers) => `<main>${offers.map((offer) => `<div class="next" data-key="next\n${offer}"><ol class="actions">${[0, 1].map((index) => `<li><button class="action" data-next="${offer}" data-index="${index}">続ける</button></li>`).join('')}</ol></div>`).join('')}</main>`
+  const root = body('')
+  let time = 0
+  let answer
+  const requests = []
+  const presses = sendOnPress(root, (request) => {
+    requests.push(request)
+    return new Promise((resolve) => (answer = resolve))
+  }, { now: () => time, settleMs: 1500, later: () => {} })
+  const show = (...offers) => {
+    patchChildren(root, cards(...offers))
+    presses.restore()
+    time += 2000
+  }
+  const at = (offer) => root.querySelectorAll(`[data-next="${offer}"]`)
+  const next = (offer) => at(offer)[0].closest('.next')
+  const flush = () => new Promise((resolve) => setTimeout(resolve, 0))
+
+  show('a')
+  at('a')[1].click()
+  show('b', 'a')
+  assert.ok(next('a').classList.contains('busy'))
+  assert.deepEqual([...at('a')].map((card) => card.classList.contains('sending')), [false, true])
+  assert.ok(!next('b').classList.contains('busy'))
+
+  answer({ sent: false, reason: 'failed' })
+  await flush()
+  assert.match(next('a').querySelector('.status').textContent, /失敗/)
+  assert.ok(!next('a').classList.contains('busy'))
+  show('c', 'b', 'a')
+  assert.match(next('a').querySelector('.status').textContent, /失敗/)
+  assert.equal(root.querySelectorAll('.status').length, 1)
+
+  at('a')[0].click()
+  assert.equal(root.querySelectorAll('.status').length, 0, 'pressed again, the old reason is gone')
+  answer({ sent: true })
+  await flush()
+  show('b', 'a')
+  assert.ok(next('a').classList.contains('busy'), 'sent: until the agent moves on and its cards go')
+  at('a')[1].click()
+  assert.equal(requests.length, 2)
+})

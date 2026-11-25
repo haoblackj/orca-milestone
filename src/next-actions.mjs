@@ -30,7 +30,8 @@ const OPTIONS_MAX = 9
 const QUESTIONS_MAX = 4
 const NEXT_BLOCK = /```next[ \t]*\r?\n([\s\S]*?)\r?\n?```\s*$/
 const CONTROL = /[\u0000-\u001f\u007f]/
-const TRACKED_AGENTS = new Set(['claude', 'codex'])
+const AGENT_NAMES = { claude: 'Claude', codex: 'Codex' }
+const TRACKED_AGENTS = new Set(Object.keys(AGENT_NAMES))
 const PERMISSION_STATES = ['waiting', 'permission']
 // The pane key of an agent in an Orca chat, which has no terminal.
 const CHAT_PANE = 'structured-agent-session-'
@@ -163,7 +164,7 @@ export function nextOffer(worktree, launch = null, reply = null) {
 
 /**
  * The proposals of each of several agents in one workspace, the last to end its turn first, each named
- * after its conversation. A card is sent to the pane of the agent that proposed it, so the others never get it.
+ * after its conversation, or its kind when that has no name. A card is sent to the pane of the agent that proposed it, so the others never get it.
  */
 function proposalsAmong(worktree) {
   const agents = liveAgents(worktree)
@@ -174,9 +175,8 @@ function proposalsAmong(worktree) {
     .filter(({ suggestions }) => suggestions.length > 0)
     .sort((a, b) => (b.agent.stateStartedAt ?? 0) - (a.agent.stateStartedAt ?? 0))
     .map(({ agent, suggestions }) => {
-      const name = agent.conversationName ?? agent.displayName ?? agent.taskTitle
-      const from = typeof name === 'string' && name.trim() ? shorten(name, FROM_MAX) : null
-      return { ...base('proposal', worktree, agent, ''), suggestions, ...(from ? { from } : {}) }
+      const name = [agent.conversationName, agent.displayName, agent.taskTitle].find((text) => typeof text === 'string' && text.trim())
+      return { ...base('proposal', worktree, agent, ''), suggestions, from: name ? shorten(name, FROM_MAX) : AGENT_NAMES[agent.agentType] }
     })
 }
 

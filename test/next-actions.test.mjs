@@ -99,6 +99,13 @@ test('in a workspace of several agents, each one that finished its turn offers i
   assert.equal([...from].length, 60, 'a long name is shortened')
 })
 
+test('among several agents, the cards of one without a name of its own name its kind', async () => {
+  const blank = agent({ paneKey: 'tab:a', conversationName: ' ', displayName: '整理', stateStartedAt: 9 })
+  const none = agent({ paneKey: 'tab:b', conversationName: null, displayName: '', taskTitle: null, stateStartedAt: 5 })
+  const codex = agent({ paneKey: 'tab:c', agentType: 'codex', stateStartedAt: 3 })
+  assert.deepEqual((await offersOf([worktree([blank, none, codex])])).map((offer) => offer.from), ['整理', 'Claude', 'Codex'])
+})
+
 test('the focused workspace shows the cards of every agent that offers some, under one heading', async () => {
   const offers = await offersOf([
     worktree([agent({ paneKey: 'tab:a', conversationName: '前の作業', stateStartedAt: 3 }), agent({ paneKey: 'tab:b', conversationName: 'リリースノートを書く', stateStartedAt: 9 })]),
