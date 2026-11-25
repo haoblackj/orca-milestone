@@ -7,7 +7,7 @@ import { configureHost } from '../src/host.mjs'
 import { createLaunchHook } from '../src/launch-hook.mjs'
 import { cliEnv, readWorkspaces } from '../src/orca-cli.mjs'
 import { whereOf } from '../src/risk.mjs'
-import { wslHostOf } from '../src/wsl-host.mjs'
+import { findWslHost, wslHostOf } from '../src/wsl-host.mjs'
 
 test('a plugin folder WSL serves to Windows gives the home, the environment and /proc of its distro', async () => {
   const statOf = async (path) => {
@@ -23,6 +23,56 @@ test('a plugin folder WSL serves to Windows gives the home, the environment and 
   assert.equal(await wsl.isRunning(42), true)
   assert.equal(await wsl.isRunning(43), false)
   assert.equal(wslHostOf('/Users/alice/orca-milestone'), null)
+})
+
+const ENVIRONMENTS = [
+  { name: 'build box', endpoints: [] },
+  { name: 'Empty (WSL)', orcadDeployment: { kind: 'wsl', distro: 'Empty' } },
+  { name: 'Ubuntu (WSL)', orcadDeployment: { kind: 'wsl', distro: 'Ubuntu' } }
+]
+const INSTALLED = String.raw`C:\Users\alice\AppData\Roaming\orca\plugins\andoshin11.milestone`
+const FILES = {
+  [String.raw`\\wsl.localhost\Empty\home`]: ['alice'],
+  [String.raw`\\wsl.localhost\Empty\home\alice`]: ['.bashrc'],
+  [String.raw`\\wsl.localhost\Ubuntu\home`]: ['nobody', 'alice'],
+  [String.raw`\\wsl.localhost\Ubuntu\home\nobody`]: [],
+  [String.raw`\\wsl.localhost\Ubuntu\home\alice`]: ['.claude']
+}
+const readNames = async (dir) => {
+  if (!FILES[dir]) throw new Error('ENOENT')
+  return FILES[dir]
+}
+const listing = (environments) => async () => ({ ok: true, result: { environments } })
+
+test('installed on Windows, the plugin finds the distro Orca runs and the home in it that Claude uses', async () => {
+  const wsl = await findWslHost(INSTALLED, { platform: 'win32', listEnvironments: listing(ENVIRONMENTS), readNames })
+  assert.equal(wsl.environment, 'Ubuntu (WSL)')
+  assert.equal(wsl.home, String.raw`\\wsl.localhost\Ubuntu\home\alice`)
+  assert.equal(wsl.agentHome, '/home/alice')
+})
+
+test('a folder WSL serves names its distro by itself, and no other machine asks for one', async () => {
+  const listEnvironments = () => assert.fail('must not ask Orca')
+  const served = await findWslHost(String.raw`\\wsl.localhost\Debian\home\bob\orca-milestone`, { platform: 'win32', listEnvironments, readNames })
+  assert.equal(served.environment, 'Debian (WSL)')
+  assert.equal(await findWslHost('/Users/alice/orca-milestone', { platform: 'darwin', listEnvironments, readNames }), null)
+})
+
+test('installed on Windows without a distro that has agents, the plugin runs for those of Windows', async () => {
+  const find = (environments) => findWslHost(INSTALLED, { platform: 'win32', listEnvironments: listing(environments), readNames })
+  assert.equal(await find([]), null)
+  assert.equal(await find(ENVIRONMENTS.slice(0, 2)), null)
+})
+
+// Taken for a Windows without WSL, it would show nothing until the next start of the worker.
+test('the plugin does not start when Orca does not say which environments it has, or the only distro cannot be read', async () => {
+  const failing = { platform: 'win32', readNames }
+  await assert.rejects(findWslHost(INSTALLED, { ...failing, listEnvironments: async () => { throw new Error('runtime_unavailable') } }), /runtime_unavailable/)
+  await assert.rejects(findWslHost(INSTALLED, { ...failing, listEnvironments: async () => ({ ok: false, error: { message: 'no runtime' } }) }), /no runtime/)
+  const stopped = { name: 'Stopped (WSL)', orcadDeployment: { kind: 'wsl', distro: 'Stopped' } }
+  await assert.rejects(findWslHost(INSTALLED, { ...failing, listEnvironments: listing([stopped]) }), /ENOENT/)
+  const found = await findWslHost(INSTALLED, { ...failing, listEnvironments: listing([stopped, ...ENVIRONMENTS]) })
+  assert.equal(found.environment, 'Ubuntu (WSL)')
 })
 
 // Orca stops a plugin whose new version asks for more until a person allows it.

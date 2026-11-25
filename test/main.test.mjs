@@ -7,12 +7,12 @@ import { createLaunchHook, withProgressTool, withTaskInstructions } from '../src
 
 const manifest = JSON.parse(readFileSync(join(import.meta.dirname, '..', 'orca-plugin.json'), 'utf8'))
 
-test('registers the commands and events declared in the manifest, and starts nothing on activate', () => {
+test('registers the commands and events declared in the manifest, and starts nothing on activate', async () => {
   const commands = []
   const events = []
   const handlers = []
   const hooks = []
-  activate({
+  await activate({
     host: { call: () => assert.fail('activate must not call the host') },
     events: { on: (event) => events.push(event) },
     commands: { register: (id) => commands.push(id) },

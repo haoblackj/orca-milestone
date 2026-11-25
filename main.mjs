@@ -6,16 +6,17 @@ import { createLaunchHook } from './src/launch-hook.mjs'
 import { createMilestoneWorker } from './src/milestone-worker.mjs'
 import { configureHost } from './src/host.mjs'
 import { resolveOrcaCli, runOrca } from './src/orca-cli.mjs'
-import { wslHostOf } from './src/wsl-host.mjs'
+import { findWslHost } from './src/wsl-host.mjs'
 
-export default function activate(orca) {
-  // Orca for Windows, with the agents in the WSL distro this folder lives in.
-  const wsl = wslHostOf(import.meta.dirname)
+export default async function activate(orca) {
+  const cli = resolveOrcaCli()
+  // Orca for Windows, with the agents in a WSL distro. Orca gives a worker 10 s to start.
+  const wsl = await findWslHost(import.meta.dirname, { listEnvironments: () => runOrca(cli, ['environment', 'list', '--json'], 5_000) })
   if (wsl) configureHost({ agentHome: wsl.agentHome, isRunning: wsl.isRunning, permissionHook: false, codexProgress: false })
   const worker = createMilestoneWorker({
     orca,
     home: wsl?.home ?? homedir(),
-    cli: resolveOrcaCli(),
+    cli,
     ...(wsl && {
       watchDir: wsl.watchDir,
       statusPollMs: wsl.statusPollMs,
